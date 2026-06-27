@@ -106,6 +106,7 @@ async function poll() {
 
   let clientlistMap = null;
   let meshMap = new Map();
+  let nodeGroups = new Map();
   let neighMap = {};
 
   if (masterAp) {
@@ -113,7 +114,9 @@ async function poll() {
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     }
-    meshMap = await sshModule.fetchMeshNodeMacs(masterAp);
+    var meshResult = await sshModule.fetchMeshNodeMacs(masterAp);
+    meshMap = meshResult.meshMap;
+    nodeGroups = meshResult.nodeGroups;
     // Fetch ip neigh from master only. Satellites have incomplete neigh tables
     // and would resolve the wrong IP for other nodes' management addresses.
     neighMap = await sshModule.fetchNeighMap(masterAp);
@@ -123,12 +126,11 @@ async function poll() {
 
   await Promise.allSettled(aps.map(async function(ap) {
     try {
-      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap);
+      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap, nodeGroups);
 
       // Success: reset failure counter, accept results
       apFailCount[ap.name] = 0;
       clients.forEach(function(c) { allRawClients.push(c); });
-
       apStatus[ap.name] = {
         online: true,
         clients: clients.filter(function(c) { return !c.isMeshNode; }).length,
@@ -170,7 +172,6 @@ async function poll() {
   });
 
   const collapsed = collapseMeshNodes(enriched);
-
   // Enrich each client with OPNsense DHCP lease and reservation data.
   // For non-mesh clients, promote dhcp.hostname and dhcp.ip to the top-level
   // fields so the frontend can display them without reading into dhcp.*.
@@ -192,7 +193,6 @@ async function poll() {
   mqttModule.publishClientStates(prevClients, currentClients, apStatus);
   broadcastState();
 }
-
 async function handleDisconnect(mac) {
   const c = currentClients.get(mac);
   if (!c) {
@@ -246,7 +246,6 @@ wss.on('connection', function(ws) {
   }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
-
 const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 
