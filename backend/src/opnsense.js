@@ -213,6 +213,27 @@ async function fetchReservationsConfigXml(cfg) {
 
 const NEIGHBOR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+/**
+ * Extract the interface identifier from a hostdiscovery row.
+ *
+ * OPNsense versions differ in which field carries the interface name:
+ *   - Older builds: row.interface or row.if  (BSD device name, e.g. igb0)
+ *   - Newer builds: row.if_descr or row.ifdescr (logical alias, e.g. LAN)
+ *
+ * We try every known variant and return an empty string when none is present
+ * so the caller can detect and log the unknown schema.
+ */
+function extractIface(row) {
+  return (
+    row.interface  ||
+    row.if_descr   ||
+    row.ifdescr    ||
+    row.if         ||
+    row.iface      ||
+    ''
+  ).toLowerCase();
+}
+
 async function fetchNeighbors(cfg) {
   var ndCfg = cfg.neighbor_discovery;
 
@@ -228,32 +249,37 @@ async function fetchNeighbors(cfg) {
   );
 
   try {
-    var rows   = await fetchAllRows(cfg, '/api/hostdiscovery/service/search');
-    var now    = Date.now();
-    var newMap = {};
-
-    // Collect the distinct interface names present in the raw API response.
-    // Logged at info level so the user can see what to put in config.yaml
-    // when the configured names do not match and zero hosts are returned.
-    var seenIfaces = new Set();
-    rows.forEach(function (row) {
-      var iface = (row.interface || row.if || '').toLowerCase();
-      if (iface) seenIfaces.add(iface);
-    });
+    var rows = await fetchAllRows(cfg, '/api/hostdiscovery/service/search');
+    var now  = Date.now();
 
     if (rows.length === 0) {
       logger.info('[OPNsense] Neighbor discovery: API returned 0 rows (service may have no entries yet)');
-    } else {
-      logger.info(
-        '[OPNsense] Neighbor discovery: ' + rows.length + ' raw row(s) received; ' +
-        'interface(s) present in response: ' +
-        (seenIfaces.size > 0 ? Array.from(seenIfaces).sort().join(', ') : '(none)') +
-        ' | configured filter: ' + Array.from(allowedIfaces).join(', ')
-      );
+      neighborMap = {};
+      return;
     }
 
+    // Log the full key set of the first row once so the interface field name
+    // is always visible in the log, making schema mismatches trivial to spot.
+    logger.info('[OPNsense] Neighbor discovery: first row keys: ' + Object.keys(rows[0]).join(', '));
+    logger.info('[OPNsense] Neighbor discovery: first row sample: ' + JSON.stringify(rows[0]));
+
+    // Collect distinct interface values seen across all rows for diagnostics.
+    var seenIfaces = new Set();
     rows.forEach(function (row) {
-      var iface = (row.interface || row.if || '').toLowerCase();
+      var iface = extractIface(row);
+      if (iface) seenIfaces.add(iface);
+    });
+
+    logger.info(
+      '[OPNsense] Neighbor discovery: ' + rows.length + ' raw row(s); ' +
+      'interface values seen: ' +
+      (seenIfaces.size > 0 ? Array.from(seenIfaces).sort().join(', ') : '(none - check first row sample above)') +
+      ' | configured filter: ' + Array.from(allowedIfaces).join(', ')
+    );
+
+    var newMap = {};
+    rows.forEach(function (row) {
+      var iface = extractIface(row);
       if (!allowedIfaces.has(iface)) return;
 
       // OPNsense may return a Unix timestamp (seconds) or an ISO date string
