@@ -1,27 +1,19 @@
 import { useState } from 'react';
 
 const COLUMNS = [
-  { key: 'mac',            label: 'MAC Address' },
-  { key: 'vendor',         label: 'Vendor' },
-  { key: 'hostname',       label: 'Hostname' },
-  { key: 'ip',             label: 'IP Address' },
-  { key: 'apName',         label: 'Access Point' },
-  { key: 'iface',          label: 'Interface' },
-  { key: 'rssi',           label: 'RSSI (dBm)' },
-  { key: 'tx_bytes',       label: 'TX' },
-  { key: 'rx_bytes',       label: 'RX' },
+  { key: 'mac',      label: 'MAC Address' },
+  { key: 'vendor',   label: 'Vendor' },
+  { key: 'hostname', label: 'Hostname' },
+  { key: 'ip',       label: 'IP Address' },
+  { key: 'apName',   label: 'Access Point' },
+  { key: 'iface',    label: 'Interface' },
+  { key: 'rssi',     label: 'RSSI (dBm)' },
+  { key: 'tx_bytes', label: 'TX' },
+  { key: 'rx_bytes', label: 'RX' },
 ];
 
 // Default sort applied on first load and when the user clicks "Reset sort".
 const DEFAULT_SORT = [{ key: 'apName', dir: 'asc' }];
-
-// Connection type filter options shown as toggle chips above the table.
-const CONNECTION_TYPE_FILTERS = [
-  { value: 'all',   label: 'All' },
-  { value: 'wifi',  label: 'Wi-Fi' },
-  { value: 'wired', label: 'Wired' },
-  { value: 'mesh',  label: 'Mesh' },
-];
 
 function rssiColor(rssi) {
   if (rssi === null || rssi === undefined) return 'text-gray-500';
@@ -84,40 +76,25 @@ function compareByKey(a, b, key) {
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
 
-/**
- * Badge shown in the Vendor column to identify the connection type of a client.
- * Mesh nodes get their existing indigo badge; wired clients get an amber badge.
- */
-function ConnectionTypeBadge({ client }) {
-  if (client.isMeshNode || client.connectionType === 'mesh') {
+function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiClick }) {
+  // Mesh nodes get a distinct infrastructure badge
+  if (client.isMeshNode) {
     return (
       <span className="inline-flex items-center gap-1 bg-indigo-900/40 border border-indigo-700/50 text-indigo-300 text-xs rounded-full px-2 py-0.5 font-medium">
         <span className="text-indigo-400">&#9737;</span> Mesh Node
       </span>
     );
   }
-  if (client.connectionType === 'wired') {
-    return (
-      <span className="inline-flex items-center gap-1 bg-amber-900/40 border border-amber-700/50 text-amber-300 text-xs rounded-full px-2 py-0.5 font-medium">
-        <span className="text-amber-400">&#9135;</span> Wired
-      </span>
-    );
-  }
-  return null;
-}
 
-function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiClick }) {
-  if (client.isMeshNode || client.connectionType === 'mesh') {
-    return <ConnectionTypeBadge client={client} />;
-  }
+  // Wired clients: show OUI + vendor normally, no extra badge.
+  // (The Access Point column already identifies them as "Wired <Interface>".)
 
   const oui = macOui(client.mac);
   const ouiActive = oui && activeOuis.has(oui);
   const vendorActive = client.vendor && activeVendors.has(client.vendor);
 
   return (
-    <span className="inline-flex items-center gap-1.5 flex-wrap">
-      {client.connectionType === 'wired' && <ConnectionTypeBadge client={client} />}
+    <span className="inline-flex items-center gap-1.5">
       {oui && (
         <button
           onClick={function(e) { e.stopPropagation(); onOuiClick(oui); }}
@@ -163,13 +140,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [activeVendors, setActiveVendors] = useState(new Set());
   const [activeOuis, setActiveOuis]       = useState(new Set());
 
-  // Single-select connection type filter. 'all' means no filtering.
-  const [connectionTypeFilter, setConnectionTypeFilter] = useState('all');
-
-  // Detect whether any wired clients exist in the current client list so we
-  // only show the connection type toggles when relevant.
-  const hasWiredClients = clients.some(function(c) { return c.connectionType === 'wired'; });
-
   function toggleFacet(setter, value) {
     setter(function(prev) {
       const next = new Set(prev);
@@ -183,23 +153,11 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     setActiveAps(new Set());
     setActiveVendors(new Set());
     setActiveOuis(new Set());
-    setConnectionTypeFilter('all');
   }
 
-  const hasFilter = (
-    search.length > 0 ||
-    activeAps.size > 0 ||
-    activeVendors.size > 0 ||
-    activeOuis.size > 0 ||
-    connectionTypeFilter !== 'all'
-  );
+  const hasFilter = search.length > 0 || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0;
 
   const filtered = clients.filter(function(c) {
-    // Connection type filter
-    if (connectionTypeFilter !== 'all') {
-      const ct = c.connectionType || (c.isMeshNode ? 'mesh' : 'wifi');
-      if (ct !== connectionTypeFilter) return false;
-    }
     // Text search
     if (search) {
       const q = search.toLowerCase();
@@ -331,33 +289,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             )}
           </div>
         </div>
-
-        {/* Connection type toggle - only shown when wired clients are present */}
-        {hasWiredClients && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-600 mr-1">Type:</span>
-            {CONNECTION_TYPE_FILTERS.map(function(f) {
-              const isActive = connectionTypeFilter === f.value;
-              return (
-                <button
-                  key={f.value}
-                  onClick={function() {
-                    setConnectionTypeFilter(isActive ? 'all' : f.value);
-                  }}
-                  className={
-                    'text-xs px-2.5 py-0.5 rounded-full border transition-colors ' +
-                    (isActive
-                      ? 'bg-blue-900/50 border-blue-600/60 text-blue-300'
-                      : 'bg-gray-800 border-gray-700 text-gray-500 hover:border-blue-600/40 hover:text-blue-300')
-                  }
-                >
-                  {f.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {chips.map(function(chip, i) {
@@ -371,7 +302,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
           </div>
         )}
       </div>
-
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -407,17 +337,13 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               const isKicking = !!disconnecting[c.mac];
               const txFmt = fmtBytes(c.tx_bytes);
               const rxFmt = fmtBytes(c.rx_bytes);
-              const isWired    = c.connectionType === 'wired';
-              const isMesh     = c.isMeshNode || c.connectionType === 'mesh';
-
+              const isWired = c.connectionType === 'wired';
               return (
                 <tr
                   key={c.mac}
                   className={
                     'border-b border-gray-800 last:border-0 transition-colors ' +
-                    (isMesh  ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
-                     isWired ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
-                               'hover:bg-gray-800/50')
+                    (c.isMeshNode ? 'bg-indigo-950/20 hover:bg-indigo-950/30' : 'hover:bg-gray-800/50')
                   }
                 >
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
@@ -441,7 +367,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     >
                       <span className={
                         'w-1.5 h-1.5 rounded-full inline-block ' +
-                        (isMesh ? 'bg-indigo-400' : isWired ? 'bg-amber-400' : 'bg-green-400')
+                        (c.isMeshNode ? 'bg-indigo-400' : isWired ? 'bg-amber-400' : 'bg-green-400')
                       }></span>
                       {c.apName}
                     </button>
@@ -457,7 +383,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     {rxFmt !== null ? rxFmt : <span className="text-gray-600">n/a</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {isMesh ? (
+                    {c.isMeshNode ? (
                       <span className="text-xs text-gray-600 px-3 py-1.5">Infrastructure</span>
                     ) : isWired ? (
                       <span className="text-xs text-gray-600 px-3 py-1.5">Wired</span>
@@ -482,7 +408,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
           </tbody>
         </table>
       </div>
-
       <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
         Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
       </div>
