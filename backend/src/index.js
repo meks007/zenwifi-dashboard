@@ -31,6 +31,11 @@ const masterAp = aps.find(function(ap) { return ap.master === true; }) || null;
 // How many consecutive poll failures before an AP's clients are cleared.
 const FAILURE_THRESHOLD = 3;
 
+// How often (in poll cycles) to re-run wireless interface discovery per AP.
+// Discovery runs on the very first poll and then once every N cycles.
+// Default: 10 (configurable via iface_discovery_interval in config.yaml).
+const ifaceDiscoveryInterval = config.iface_discovery_interval || 10;
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
@@ -125,7 +130,10 @@ async function poll() {
 
   await Promise.allSettled(aps.map(async function(ap) {
     try {
-      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap, nodeGroups);
+      const clients = await sshModule.fetchClientsFromAP(
+        ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval
+      );
+
       // Success: reset failure counter, accept results
       apFailCount[ap.name] = 0;
       clients.forEach(function(c) { allRawClients.push(c); });
@@ -282,6 +290,7 @@ wss.on('connection', function(ws) {
 
 const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
+logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
 
 mqttModule.connect(config, handleDisconnect);
 
