@@ -17,6 +17,18 @@ function rssiColor(rssi) {
   return 'text-red-400';
 }
 
+function VendorCell({ client }) {
+  if (client.isMeshNode) {
+    return (
+      <span className="inline-flex items-center gap-1 bg-indigo-900/40 border border-indigo-700/50 text-indigo-300 text-xs rounded-full px-2 py-0.5 font-medium">
+        <span className="text-indigo-400">&#9737;</span> Mesh Node
+      </span>
+    );
+  }
+  if (!client.vendor) return <span className="text-gray-600">n/a</span>;
+  return <span className="text-gray-400">{client.vendor}</span>;
+}
+
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('apName');
@@ -29,7 +41,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       (c.vendor && c.vendor.toLowerCase().includes(q)) ||
       (c.hostname && c.hostname.toLowerCase().includes(q)) ||
       (c.ip && c.ip.toLowerCase().includes(q)) ||
-      (c.apName && c.apName.toLowerCase().includes(q))
+      (c.apName && c.apName.toLowerCase().includes(q)) ||
+      (c.isMeshNode && 'mesh node'.includes(q))
     );
   });
 
@@ -97,9 +110,17 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             {sorted.map(function(c) {
               const isKicking = !!disconnecting[c.mac];
               return (
-                <tr key={c.mac} className="border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition-colors">
+                <tr
+                  key={c.mac}
+                  className={
+                    'border-b border-gray-800 last:border-0 transition-colors ' +
+                    (c.isMeshNode ? 'bg-indigo-950/20 hover:bg-indigo-950/30' : 'hover:bg-gray-800/50')
+                  }
+                >
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
-                  <td className="px-4 py-3 text-xs text-gray-400">{c.vendor || <span className="text-gray-600">n/a</span>}</td>
+                  <td className="px-4 py-3 text-xs">
+                    <VendorCell client={c} />
+                  </td>
                   <td className="px-4 py-3 text-gray-300">{c.hostname || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{c.ip || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3">
@@ -113,18 +134,22 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     {c.rssi != null ? c.rssi : 'n/a'}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={function() { onDisconnect(c.mac); }}
-                      disabled={isKicking}
-                      className={
-                        'text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ' +
-                        (isKicking
-                          ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-                          : 'bg-red-600/20 text-red-400 border border-red-600/30 hover:bg-red-600/40 hover:text-red-300')
-                      }
-                    >
-                      {isKicking ? 'Disconnecting...' : 'Disconnect'}
-                    </button>
+                    {c.isMeshNode ? (
+                      <span className="text-xs text-gray-600 px-3 py-1.5">Infrastructure</span>
+                    ) : (
+                      <button
+                        onClick={function() { onDisconnect(c.mac); }}
+                        disabled={isKicking}
+                        className={
+                          'text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ' +
+                          (isKicking
+                            ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                            : 'bg-red-600/20 text-red-400 border border-red-600/30 hover:bg-red-600/40 hover:text-red-300')
+                        }
+                      >
+                        {isKicking ? 'Disconnecting...' : 'Disconnect'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
