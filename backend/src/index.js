@@ -36,6 +36,9 @@ const FAILURE_THRESHOLD = 3;
 // Default: 10 (configurable via iface_discovery_interval in config.yaml).
 const ifaceDiscoveryInterval = config.iface_discovery_interval || 10;
 
+// Whether to include IPv6 addresses. Defaults to false.
+const showIpv6 = config.show_ipv6 === true;
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
@@ -60,6 +63,24 @@ function broadcastState() {
     mqttConnected: mqttModule.isConnected(),
     timestamp: new Date().toISOString(),
   });
+}
+
+/**
+ * Returns true if the given IP string is an IPv6 address (contains a colon).
+ */
+function isIpv6(ip) {
+  return typeof ip === 'string' && ip.indexOf(':') !== -1;
+}
+
+/**
+ * Filter the IP field of a client object according to the show_ipv6 setting.
+ * When show_ipv6 is false (default), IPv6 addresses are replaced with null
+ * so the IP column stays clean.
+ */
+function filterIp(ip) {
+  if (!ip) return ip;
+  if (!showIpv6 && isIpv6(ip)) return null;
+  return ip;
 }
 
 /**
@@ -105,6 +126,27 @@ function collapseMeshNodes(rawClients) {
   return regular.concat(Array.from(nodeMap.values()));
 }
 
+/**
+ * Resolve a human-readable label for a wired interface name.
+ * Falls back to the raw interface name (lowercased) if no label is configured.
+ *
+ * Config example:
+ *   neighbor_discovery:
+ *     interface_labels:
+ *       lan: "LAN"
+ *       opt1: "IoT"
+ */
+function resolveIfaceLabel(ifaceName, ndCfg) {
+  var labels = ndCfg && ndCfg.interface_labels;
+  if (labels && typeof labels === 'object') {
+    var key = (ifaceName || '').toLowerCase();
+    if (labels[key]) return labels[key];
+  }
+  // Fallback: capitalise first letter of the raw name
+  var raw = ifaceName || 'unknown';
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+}
+
 async function poll() {
   const allRawClients = [];
 
@@ -133,7 +175,6 @@ async function poll() {
       const clients = await sshModule.fetchClientsFromAP(
         ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval
       );
-
       // Success: reset failure counter, accept results
       apFailCount[ap.name] = 0;
       clients.forEach(function(c) { allRawClients.push(c); });
@@ -184,10 +225,11 @@ async function poll() {
   // Priority: reservation > dynamic lease > WiFi-side ARP/clientlist value.
   const dhcpEnriched = collapsed.map(function(c) {
     var dhcp = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
+    var rawIp = (!c.isMeshNode && dhcp && dhcp.ip) ? dhcp.ip : (c.ip || null);
     return Object.assign({}, c, {
       connectionType: c.isMeshNode ? 'mesh' : 'wifi',
       dhcp:     dhcp,
-      ip:       (!c.isMeshNode && dhcp && dhcp.ip)       ? dhcp.ip       : (c.ip       || null),
+      ip:       filterIp(rawIp),
       hostname: (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
     });
   });
@@ -195,17 +237,21 @@ async function poll() {
   // Merge wired clients from OPNsense neighbor discovery when the feature is enabled.
   // Only hosts not already visible as a ZenWifi Wi-Fi client are included.
   var allClients = dhcpEnriched;
+  var ndCfg = config.opnsense && config.opnsense.neighbor_discovery;
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
     var wifiMacs = dhcpEnriched.map(function(c) { return c.mac; });
     var wired    = opnsense.getWiredClients(wifiMacs);
     var wiredRows = wired.map(function(c) {
+      var ifaceLabel = resolveIfaceLabel(c.interface, ndCfg);
+      var rawIp = c.ip || null;
       return {
         mac:            c.mac,
-        ip:             c.ip,
+        ip:             filterIp(rawIp),
         hostname:       c.hostname,
         vendor:         ouiModule.lookup(c.mac),
         dhcp:           c.hasReservation ? { hasReservation: true, description: c.description } : null,
-        apName:         'OPNsense (' + c.interface + ')',
+        // "Wired LAN", "Wired IoT", etc. - shown in the Access Point column
+        apName:         'Wired ' + ifaceLabel,
         apHost:         config.opnsense ? config.opnsense.host : null,
         iface:          c.interface,
         rssi:           null,
@@ -291,6 +337,7 @@ wss.on('connection', function(ws) {
 const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
+logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
 
 mqttModule.connect(config, handleDisconnect);
 
