@@ -180,12 +180,19 @@ function runOPNsenseSSH(cfg, command) {
 
 /**
  * Source 1 - Kea DHCPv4 API (OPNsense >= 24.1 with Kea backend).
- * Returns null if the endpoint is not present (falls through to config.xml).
+ * Returns null in two cases to trigger the SSH fallback:
+ *   - HTTP error or network failure (endpoint does not exist)
+ *   - Zero rows returned (Kea not in use / no reservations configured in Kea)
+ * Only returns a map when Kea is the active backend AND has actual entries.
  */
 async function fetchReservationsKea(cfg) {
   try {
     var rows = await fetchAllRows(cfg, '/api/kea/dhcpv4/searchReservation');
-    var map  = {};
+    if (rows.length === 0) {
+      logger.debug('[OPNsense] Kea returned 0 reservations, falling back to config.xml via SSH');
+      return null;
+    }
+    var map = {};
     rows.forEach(function (row) {
       var mac = (row['hw-address'] || row.mac || '').toLowerCase();
       if (!mac) return;
@@ -198,7 +205,7 @@ async function fetchReservationsKea(cfg) {
     logger.info('[OPNsense] Kea reservations: ' + Object.keys(map).length + ' entry(ies)');
     return map;
   } catch (err) {
-    logger.debug('[OPNsense] Kea reservation endpoint unavailable (' + err.message + '), trying config.xml via SSH');
+    logger.debug('[OPNsense] Kea endpoint unavailable (' + err.message + '), falling back to config.xml via SSH');
     return null;
   }
 }
@@ -209,6 +216,7 @@ async function fetchReservationsKea(cfg) {
  */
 async function fetchReservationsConfigXml(cfg) {
   try {
+    logger.info('[OPNsense SSH] Connecting to ' + (cfg.ssh_host || cfg.host) + ' to read config.xml');
     var xmlChunk = await runOPNsenseSSH(cfg, 'cat /conf/config.xml');
 
     var map     = {};
