@@ -2,18 +2,62 @@
 
 A self-hosted web dashboard for Asus ZenWifi access points running Merlin or stock Asus firmware.
 
-Supports multi-AP mesh setups (e.g. XT8 AiMesh) as well as standalone APs with Broadcom (wl) or Atheros/Qualcomm (wlanconfig) wireless drivers.
+Supports:
 
-## Features
+- Multi-AP mesh setups (e.g. XT8 AiMesh)
+- Standalone APs
+- Broadcom (`wl`) and Atheros/Qualcomm (`wlanconfig`) wireless drivers
 
-- Consolidated, real-time client list across all access points (WebSocket push)
-- Per-client details: MAC, vendor (OUI lookup), hostname, IP, AP, interface, RSSI, TX/RX bytes
-- Mesh node detection - backhaul nodes shown in a distinct style, not disconnectable
-- Disconnect clients from the UI or via MQTT
-- MQTT integration with LWT bridge state, per-client state/info topics, AP status and global stats
-- AP failure resilience - client list is only cleared after 3 consecutive poll failures
-- Configurable poll interval, log ring buffer size and debug logging
-- Docker Compose deployment
+## Current feature set
+
+### Real-time dashboard
+
+- **Consolidated client list across all access points** with **WebSocket push** updates
+- Per-client details (where available):
+  - MAC address
+  - Vendor (OUI lookup)
+  - Hostname and IP
+  - AP name and interface
+  - RSSI
+  - TX/RX byte counters (shown as `null` if the firmware does not expose them)
+- **AP status overview**: online/offline, client counts, last seen timestamp, and last error
+- **Live log view** (server log ring buffer)
+
+### Mesh-aware behavior (AiMesh)
+
+- **Mesh node detection** using the master router's `/tmp/aplist.json` and `/tmp/relist.json`
+- Backhaul / infrastructure entries are:
+  - Collapsed into a single row per physical mesh node
+  - Shown with a distinct visual style
+  - **Not disconnectable**
+
+### Client control
+
+- Disconnect (kick) regular clients from the UI
+- Disconnect clients via MQTT (`{prefix}/clients/{mac}/disconnect`)
+
+### MQTT integration
+
+- LWT bridge state (`{prefix}/bridge/state` retained)
+- Per-client state + info topics (retained)
+- Per-AP status topics (retained)
+- Global stats topic for total online clients (retained)
+
+### Resilience
+
+- **AP failure resilience**: an AP's client list is only cleared after **3 consecutive poll failures**
+- Configurable poll interval, log ring buffer size, and debug logging
+
+### Optional OPNsense DHCP enrichment
+
+If configured, the backend enriches clients using OPNsense DHCP data:
+
+- **Dynamic leases** via OPNsense REST API (IP, hostname, lease end, lease type)
+- **Static reservations** via:
+  - Kea reservations endpoint (if available), otherwise
+  - SSH read of `/conf/config.xml` static mappings
+
+The enriched data is exposed under `client.dhcp.*` and (for non-mesh clients) the dashboard will promote DHCP hostname/IP to the top-level fields when present.
 
 ---
 
@@ -60,15 +104,17 @@ access_points:
     username: admin
     password: secret
     master: true
-    # driver: broadcom   # optional override: broadcom | atheros
+    # driver: broadcom  # optional override: broadcom | atheros
 
   - name: "Office"
     host: 192.168.1.2
+    ssh_port: 22
     username: admin
     password: secret
 
   - name: "Bedroom"
     host: 192.168.1.3
+    ssh_port: 22
     username: admin
     password: secret
 ```
@@ -76,7 +122,7 @@ access_points:
 ### Config reference
 
 | Key | Default | Description |
-|---|---|---|
+|---|---:|---|
 | `mqtt.host` | required | MQTT broker hostname or IP |
 | `mqtt.port` | `1883` | MQTT broker port |
 | `mqtt.username` | required | MQTT username |
@@ -92,10 +138,29 @@ access_points:
 | `access_points[].password` | required | SSH password |
 | `access_points[].master` | `false` | Mark exactly one AP as master |
 | `access_points[].driver` | auto | `broadcom` or `atheros`; auto-detected if omitted |
+| `opnsense.*` | optional | OPNsense DHCP enrichment (see below) |
 
 ### Driver detection
 
-The backend probes each AP via SSH to determine whether it uses the Broadcom (`wl`) or Atheros/Qualcomm (`wlanconfig`) wireless driver. The result is cached for the lifetime of the process. Set `driver:` explicitly if auto-detection fails.
+The backend probes each AP via SSH to determine whether it uses the Broadcom (`wl`) or Atheros/Qualcomm (`wlanconfig`) wireless driver. The result is cached for the lifetime of the process.
+
+Set `driver:` explicitly if auto-detection fails.
+
+---
+
+## OPNsense DHCP enrichment (optional)
+
+See `config.example.yaml` for the full block.
+
+Minimum required fields:
+
+- `opnsense.host`
+- `opnsense.api_key`
+- `opnsense.api_secret`
+
+Optional (only needed for reservation enrichment):
+
+- `opnsense.username` + `opnsense.password` (or `opnsense.key_path`)
 
 ---
 
@@ -137,7 +202,7 @@ The broker publishes `offline` to `{prefix}/bridge/state` (retained) if the back
 
 ### Disconnect a client via MQTT
 
-```
+```bash
 mosquitto_pub -t zenwifi/clients/aa:bb:cc:dd:ee:ff/disconnect -m 1
 ```
 
@@ -179,7 +244,9 @@ mosquitto_pub -t zenwifi/clients/aa:bb:cc:dd:ee:ff/disconnect -m 1
 
 ## Mesh Node Handling
 
-On AiMesh setups the master router exposes `/tmp/aplist.json` and `/tmp/relist.json`, which map all backhaul radio MAC addresses to their physical node. The backend reads these once per poll cycle and uses them to:
+On AiMesh setups the master router exposes `/tmp/aplist.json` and `/tmp/relist.json`, which map backhaul radio MAC addresses to their physical node.
+
+The backend reads these once per poll cycle and uses them to:
 
 - Collapse multiple backhaul MACs belonging to the same physical node into a single row
 - Tag mesh infrastructure entries with a distinct visual style; they cannot be disconnected from the UI
