@@ -1,12 +1,17 @@
 // Centralised in-memory ring-buffer logger.
-// Debug logging is controlled at runtime via setDebug(bool),
-// which is called from index.js after the config is loaded.
+// Buffer size and debug flag are set at runtime from config via
+// setMaxLines(n) and setDebug(bool), called from index.js after config loads.
 
-const MAX_LINES = 500;
-
+let MAX_LINES = 500;
 let buffer = [];
 let wsBroadcast = null;
 let debugEnabled = false;
+
+function setMaxLines(n) {
+  MAX_LINES = (Number.isInteger(n) && n > 0) ? n : 500;
+  // Trim existing buffer if new limit is smaller
+  if (buffer.length > MAX_LINES) buffer = buffer.slice(buffer.length - MAX_LINES);
+}
 
 function setDebug(enabled) {
   debugEnabled = !!enabled;
@@ -52,4 +57,4 @@ function list() {
   return buffer.slice();
 }
 
-module.exports = { info, warn, error, debug, list, setBroadcaster, setDebug };
+module.exports = { info, warn, error, debug, list, setBroadcaster, setDebug, setMaxLines };
