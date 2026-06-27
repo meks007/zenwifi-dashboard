@@ -48,7 +48,8 @@ function ipToInt(ip) {
 
 /**
  * Compare two client rows for a single sort column.
- * Returns a negative, zero, or positive number (direction flip is applied by caller).
+ * Case-insensitive for string values.
+ * Returns a negative, zero, or positive number (direction flip applied by caller).
  */
 function compareByKey(a, b, key) {
   if (key === 'ip') {
@@ -59,8 +60,8 @@ function compareByKey(a, b, key) {
     if (bi === null) return -1;
     return ai < bi ? -1 : ai > bi ? 1 : 0;
   }
-  const av = a[key] != null ? a[key] : '';
-  const bv = b[key] != null ? b[key] : '';
+  const av = a[key] != null ? String(a[key]).toLowerCase() : '';
+  const bv = b[key] != null ? String(b[key]).toLowerCase() : '';
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
 
@@ -79,7 +80,8 @@ function VendorCell({ client }) {
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch] = useState('');
   // sortCols: ordered array of { key, dir }.
-  // First entry is the primary sort; subsequent entries break ties left to right.
+  // Index 0 is the primary sort; subsequent entries break ties left to right.
+  // A column absent from this array contributes nothing to the sort order.
   const [sortCols, setSortCols] = useState(DEFAULT_SORT);
 
   const filtered = clients.filter(function(c) {
@@ -103,27 +105,38 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   });
 
   /**
-   * Plain click: make this the sole primary sort column (asc), or toggle its
-   * direction if it is already the only active column.
-   * Shift+click: add as an asc tie-breaker, or toggle its direction if already
-   * in the list. Does not clear existing sort columns.
+   * Click cycles the column through: off -> asc -> desc -> off -> ...
+   *   If the column is not yet in the list it is appended as asc.
+   *   asc  -> desc  (update in place, preserving position)
+   *   desc -> off   (remove from list)
+   *
+   * Shift+click removes the column from the list immediately (unsort).
    */
   function toggleSort(key, event) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
       const existingIdx = prev.findIndex(function(s) { return s.key === key; });
+
       if (shift) {
-        if (existingIdx === -1) {
-          return prev.concat({ key: key, dir: 'asc' });
-        }
+        // Remove from list regardless of current state.
+        return prev.filter(function(s) { return s.key !== key; });
+      }
+
+      if (existingIdx === -1) {
+        // Not active: append as asc tie-breaker.
+        return prev.concat({ key: key, dir: 'asc' });
+      }
+
+      const current = prev[existingIdx];
+      if (current.dir === 'asc') {
+        // asc -> desc
         return prev.map(function(s, i) {
-          return i === existingIdx ? { key: s.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : s;
+          return i === existingIdx ? { key: s.key, dir: 'desc' } : s;
         });
       }
-      if (prev.length === 1 && prev[0].key === key) {
-        return [{ key: key, dir: prev[0].dir === 'asc' ? 'desc' : 'asc' }];
-      }
-      return [{ key: key, dir: 'asc' }];
+
+      // desc -> off (remove)
+      return prev.filter(function(s) { return s.key !== key; });
     });
   }
 
@@ -186,7 +199,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                       'px-4 py-2 text-left cursor-pointer select-none transition-colors whitespace-nowrap ' +
                       (isActive ? 'text-gray-300' : 'hover:text-gray-300')
                     }
-                    title="Click to sort. Shift+click to add as tie-breaker."
+                    title="Click to cycle asc/desc/off. Shift+click to remove from sort."
                   >
                     {col.label}{sortMark(col.key)}
                   </th>
