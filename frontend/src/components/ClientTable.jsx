@@ -12,8 +12,8 @@ const COLUMNS = [
   { key: 'rx_bytes', label: 'RX' },
 ];
 
-// Default sort applied on first load and when the user clicks "Reset sort".
-const DEFAULT_SORT = [{ key: 'apName', dir: 'asc' }];
+// Default sort: IP address ascending (numeric).
+const DEFAULT_SORT = [{ key: 'ip', dir: 'asc' }];
 
 function rssiColor(rssi) {
   if (rssi === null || rssi === undefined) return 'text-gray-500';
@@ -76,8 +76,14 @@ function compareByKey(a, b, key) {
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
 
+/**
+ * Vendor column cell.
+ * - Mesh nodes: show the Mesh Node badge only.
+ * - All other clients (Wi-Fi and wired): show OUI chip + vendor name.
+ *   Wired clients carry no extra badge here; the Access Point column
+ *   already labels them as "Wired <Interface>".
+ */
 function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiClick }) {
-  // Mesh nodes get a distinct infrastructure badge
   if (client.isMeshNode) {
     return (
       <span className="inline-flex items-center gap-1 bg-indigo-900/40 border border-indigo-700/50 text-indigo-300 text-xs rounded-full px-2 py-0.5 font-medium">
@@ -85,9 +91,6 @@ function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiCli
       </span>
     );
   }
-
-  // Wired clients: show OUI + vendor normally, no extra badge.
-  // (The Access Point column already identifies them as "Wired <Interface>".)
 
   const oui = macOui(client.mac);
   const ouiActive = oui && activeOuis.has(oui);
@@ -158,7 +161,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const hasFilter = search.length > 0 || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0;
 
   const filtered = clients.filter(function(c) {
-    // Text search
     if (search) {
       const q = search.toLowerCase();
       const textMatch = (
@@ -172,11 +174,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       );
       if (!textMatch) return false;
     }
-    // AP facet
     if (activeAps.size > 0 && !activeAps.has(c.apName)) return false;
-    // Vendor facet
     if (activeVendors.size > 0 && !activeVendors.has(c.vendor)) return false;
-    // OUI facet
     if (activeOuis.size > 0 && !activeOuis.has(macOui(c.mac))) return false;
     return true;
   });
@@ -201,22 +200,18 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
       const existingIdx = prev.findIndex(function(s) { return s.key === key; });
-
       if (shift) {
         return prev.filter(function(s) { return s.key !== key; });
       }
-
       if (existingIdx === -1) {
         return prev.concat({ key: key, dir: 'asc' });
       }
-
       const current = prev[existingIdx];
       if (current.dir === 'asc') {
         return prev.map(function(s, i) {
           return i === existingIdx ? { key: s.key, dir: 'desc' } : s;
         });
       }
-
       return prev.filter(function(s) { return s.key !== key; });
     });
   }
@@ -242,7 +237,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir;
     });
 
-  // Chip list for active facets
   const chips = [];
   activeOuis.forEach(function(v) {
     chips.push({ label: 'OUI: ' + v, remove: function() { toggleFacet(setActiveOuis, v); } });
