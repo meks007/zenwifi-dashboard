@@ -12,6 +12,9 @@ const COLUMNS = [
   { key: 'rx_bytes', label: 'RX' },
 ];
 
+// Default sort applied on first load and when the user clicks "Reset sort".
+const DEFAULT_SORT = [{ key: 'apName', dir: 'asc' }];
+
 function rssiColor(rssi) {
   if (rssi === null || rssi === undefined) return 'text-gray-500';
   if (rssi >= -60) return 'text-green-400';
@@ -30,9 +33,9 @@ function fmtBytes(val) {
 }
 
 /**
- * Convert an IPv4 string to a 32-bit integer for numeric comparison.
- * Returns null for anything that is not a valid dotted-quad address so
- * those rows sort to the end regardless of direction.
+ * Convert an IPv4 string to an unsigned 32-bit integer for numeric comparison.
+ * Returns null for anything that is not a valid dotted-quad so those rows
+ * sort to the end regardless of direction.
  */
 function ipToInt(ip) {
   if (!ip) return null;
@@ -41,6 +44,24 @@ function ipToInt(ip) {
   const octets = parts.map(Number);
   if (octets.some(function(o) { return isNaN(o) || o < 0 || o > 255; })) return null;
   return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+}
+
+/**
+ * Compare two client rows for a single sort column.
+ * Returns a negative, zero, or positive number (direction flip is applied by caller).
+ */
+function compareByKey(a, b, key) {
+  if (key === 'ip') {
+    const ai = ipToInt(a.ip);
+    const bi = ipToInt(b.ip);
+    if (ai === null && bi === null) return 0;
+    if (ai === null) return 1;
+    if (bi === null) return -1;
+    return ai < bi ? -1 : ai > bi ? 1 : 0;
+  }
+  const av = a[key] != null ? a[key] : '';
+  const bv = b[key] != null ? b[key] : '';
+  return av < bv ? -1 : av > bv ? 1 : 0;
 }
 
 function VendorCell({ client }) {
@@ -57,8 +78,9 @@ function VendorCell({ client }) {
 
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch] = useState('');
-  const [sortKey, setSortKey] = useState('apName');
-  const [sortDir, setSortDir] = useState('asc');
+  // sortCols: ordered array of { key, dir }.
+  // First entry is the primary sort; subsequent entries break ties left to right.
+  const [sortCols, setSortCols] = useState(DEFAULT_SORT);
 
   const filtered = clients.filter(function(c) {
     const q = search.toLowerCase();
@@ -73,41 +95,74 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   });
 
   const sorted = filtered.slice().sort(function(a, b) {
-    var cmp = 0;
-    if (sortKey === 'ip') {
-      // Numeric octet-by-octet comparison; null IPs always sort last.
-      const ai = ipToInt(a.ip);
-      const bi = ipToInt(b.ip);
-      if (ai === null && bi === null) cmp = 0;
-      else if (ai === null) cmp = 1;
-      else if (bi === null) cmp = -1;
-      else cmp = ai < bi ? -1 : ai > bi ? 1 : 0;
-    } else {
-      const av = a[sortKey] != null ? a[sortKey] : '';
-      const bv = b[sortKey] != null ? b[sortKey] : '';
-      cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    for (var i = 0; i < sortCols.length; i++) {
+      const cmp = compareByKey(a, b, sortCols[i].key);
+      if (cmp !== 0) return sortCols[i].dir === 'asc' ? cmp : -cmp;
     }
-    return sortDir === 'asc' ? cmp : -cmp;
+    return 0;
   });
 
-  function toggleSort(key) {
-    if (sortKey === key) {
-      setSortDir(function(d) { return d === 'asc' ? 'desc' : 'asc'; });
-    } else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
+  /**
+   * Plain click: make this the sole primary sort column (asc), or toggle its
+   * direction if it is already the only active column.
+   * Shift+click: add as an asc tie-breaker, or toggle its direction if already
+   * in the list. Does not clear existing sort columns.
+   */
+  function toggleSort(key, event) {
+    const shift = event && event.shiftKey;
+    setSortCols(function(prev) {
+      const existingIdx = prev.findIndex(function(s) { return s.key === key; });
+      if (shift) {
+        if (existingIdx === -1) {
+          return prev.concat({ key: key, dir: 'asc' });
+        }
+        return prev.map(function(s, i) {
+          return i === existingIdx ? { key: s.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : s;
+        });
+      }
+      if (prev.length === 1 && prev[0].key === key) {
+        return [{ key: key, dir: prev[0].dir === 'asc' ? 'desc' : 'asc' }];
+      }
+      return [{ key: key, dir: 'asc' }];
+    });
+  }
+
+  function resetSort() {
+    setSortCols(DEFAULT_SORT);
   }
 
   function sortMark(key) {
-    if (sortKey !== key) return '';
-    return sortDir === 'asc' ? ' (asc)' : ' (desc)';
+    const idx = sortCols.findIndex(function(s) { return s.key === key; });
+    if (idx === -1) return null;
+    const col = sortCols[idx];
+    const arrow = col.dir === 'asc' ? ' \u2191' : ' \u2193';
+    const badge = sortCols.length > 1
+      ? <sup className="ml-0.5 text-blue-400 font-bold">{idx + 1}</sup>
+      : null;
+    return <span className="text-blue-400">{arrow}{badge}</span>;
   }
+
+  const isDefaultSort =
+    sortCols.length === DEFAULT_SORT.length &&
+    sortCols.every(function(s, i) {
+      return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir;
+    });
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
+          {!isDefaultSort && (
+            <button
+              onClick={resetSort}
+              className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
+              title="Reset to default sort"
+            >
+              Reset sort
+            </button>
+          )}
+        </div>
         <input
           type="text"
           placeholder="Search MAC, vendor, hostname, IP, AP..."
@@ -122,11 +177,16 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
           <thead>
             <tr className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800">
               {COLUMNS.map(function(col) {
+                const isActive = sortCols.some(function(s) { return s.key === col.key; });
                 return (
                   <th
                     key={col.key}
-                    onClick={function() { toggleSort(col.key); }}
-                    className="px-4 py-2 text-left cursor-pointer select-none hover:text-gray-300 transition-colors whitespace-nowrap"
+                    onClick={function(e) { toggleSort(col.key, e); }}
+                    className={
+                      'px-4 py-2 text-left cursor-pointer select-none transition-colors whitespace-nowrap ' +
+                      (isActive ? 'text-gray-300' : 'hover:text-gray-300')
+                    }
+                    title="Click to sort. Shift+click to add as tie-breaker."
                   >
                     {col.label}{sortMark(col.key)}
                   </th>
