@@ -12,6 +12,24 @@ mqtt:
 # Polling involves multiple SSH commands per AP, so keep this sane (>=30 recommended).
 polling_interval_seconds: 30
 
+# How often to re-run wireless interface discovery per AP (in poll cycles).
+#
+# On every AP, the backend must first detect the driver (Broadcom/Atheros) and
+# then probe which interfaces (e.g. eth4, wl0.1, ath0) are active before it can
+# query the client association lists. This discovery is relatively expensive
+# (several SSH round-trips) but the result almost never changes at runtime.
+#
+# With this setting the result is cached and re-used for N-1 consecutive polls.
+# Discovery always runs on the very first poll after startup, and then again
+# once every N poll cycles.
+#
+#   Example: polling_interval_seconds: 30, iface_discovery_interval: 10
+#   -> discovery runs on poll 0, 10, 20, 30, ... (every ~5 minutes)
+#
+# Set to 1 to disable caching and always run discovery (original behaviour).
+# Default: 10
+iface_discovery_interval: 10
+
 # Size of the in-memory log ring buffer (number of log lines kept).
 # Older entries are dropped when the buffer is full. Default: 500.
 log_buffer_size: 500
@@ -22,6 +40,11 @@ debug_logging: false
 # Whether to include IPv6 addresses in the IP column.
 # Defaults to false: only IPv4 addresses are shown.
 show_ipv6: false
+
+# How often (in minutes) to ping discovered (non-WiFi) clients to check reachability.
+# 3 ICMP packets are sent per client. Clients that fail all 3 are hidden from the
+# frontend until they respond again. Default: 5.
+ping_interval_minutes: 5
 
 access_points:
   # Mark exactly one AP as master: true. The master node maintains
@@ -57,7 +80,7 @@ access_points:
 # When configured, the backend queries OPNsense for:
 #   - Dynamic leases       : via REST API  -> client.dhcp.ip / hostname / leaseEnds
 #   - Static mappings      : via SSH       -> client.dhcp.description / hasReservation
-#   - Neighbor discovery   : via REST API  -> wired clients visible on configured interfaces
+#   - Neighbor discovery   : via REST API  -> discovered clients visible on configured interfaces
 #
 # OPNsense is a separate box with its own IP and credentials.
 #
@@ -65,7 +88,7 @@ access_points:
 #   System -> Access -> Users -> <user> -> API keys
 #   Required privileges:
 #     - DHCP: Leases           (for lease enrichment)
-#     - Host Discovery: Search (for neighbor discovery / wired clients)
+#     - Host Discovery: Search (for neighbor discovery / discovered clients)
 #
 # SSH credentials (same field names as access_points for consistency):
 #   System -> Settings -> Administration -> Secure Shell -> enable SSH
@@ -93,19 +116,19 @@ opnsense:
   # --- Polling ---
   poll_interval: 60         # How often (seconds) to refresh DHCP data
 
-  # --- Neighbor Discovery (wired client detection) ---
+  # --- Neighbor Discovery (discovered client detection) ---
   # Requires OPNsense 26.1+ and the "Host Discovery" service to be enabled
   # (Interfaces -> Neighbors -> Automatic Discovery).
   #
   # Set enabled: false (or remove this block) to disable the feature entirely.
   # When enabled, hosts last seen more than 24 hours ago are ignored.
-  # Hosts already connected via ZenWifi Wi-Fi are never shown as wired.
+  # Hosts already connected via ZenWifi Wi-Fi are never shown as discovered.
   #
   # The API key user needs the "Host Discovery: Search" privilege in addition
   # to the DHCP privilege used for lease enrichment.
   #
   # interface_labels: optional map of OPNsense interface name (lowercase) to a
-  # human-readable label shown in the "Access Point" column as "Wired <Label>".
+  # human-readable label shown in the "Access Point" column as "Discovered <Label>".
   # If an interface has no label entry, the raw interface name is used.
   neighbor_discovery:
     enabled: true
