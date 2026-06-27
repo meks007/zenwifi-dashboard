@@ -46,3 +46,24 @@ access_points:
     username: admin
     password: secret
     # driver: atheros
+
+# ---------------------------------------------------------------------------
+# OPNsense DHCP integration (optional)
+# ---------------------------------------------------------------------------
+# When configured, the backend queries your OPNsense router's REST API on
+# every poll cycle to retrieve DHCP leases and static mappings (reservations).
+# Each WiFi client is then enriched with a 'dhcp' field containing:
+#   ip, hostname, description, leaseEnds, leaseType, hasReservation
+#
+# API credentials: System -> Access -> Users -> <user> -> API keys
+# Required privilege: DHCP: Leases (read-only is sufficient)
+#
+# Remove this block or leave host empty to disable DHCP enrichment.
+# ---------------------------------------------------------------------------
+opnsense:
+  host: 192.168.1.1       # OPNsense IP or hostname (same host as your gateway)
+  port: 443               # HTTPS port (default: 443)
+  apiKey: your-api-key
+  apiSecret: your-api-secret
+  verifySsl: false        # Set to true if OPNsense has a valid/trusted TLS certificate
+  pollInterval: 60        # How often (seconds) to refresh DHCP data from OPNsense
