@@ -10,6 +10,7 @@ const mqttModule = require('./mqtt');
 const logger = require('./logger');
 const ouiModule = require('./oui');
 const opnsense = require('./opnsense');
+const pinger = require('./pinger');
 
 const app = express();
 app.use(cors());
@@ -39,6 +40,9 @@ const ifaceDiscoveryInterval = config.iface_discovery_interval || 10;
 // Whether to include IPv6 addresses. Defaults to false.
 const showIpv6 = config.show_ipv6 === true;
 
+// How often (in minutes) to ping discovered clients. Default: 5.
+const pingIntervalMinutes = config.ping_interval_minutes || 5;
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
@@ -56,9 +60,18 @@ function broadcast(data) {
 }
 
 function broadcastState() {
+  // Exclude discovered clients whose ping result is definitively offline.
+  // Clients that have never been pinged yet (isOnline == null) are included
+  // so they appear immediately after discovery until the first ping completes.
+  var visible = Array.from(currentClients.values()).filter(function(c) {
+    if (c.connectionType !== 'discovered') return true;
+    var online = pinger.isOnline(c.mac);
+    return online !== false; // show if online OR not yet checked (null)
+  });
+
   broadcast({
     type: 'clients',
-    clients: Array.from(currentClients.values()),
+    clients: visible,
     apStatus: apStatus,
     mqttConnected: mqttModule.isConnected(),
     timestamp: new Date().toISOString(),
@@ -127,8 +140,8 @@ function collapseMeshNodes(rawClients) {
 }
 
 /**
- * Resolve a human-readable label for a wired interface name.
- * Falls back to the raw interface name (lowercased) if no label is configured.
+ * Resolve a human-readable label for a discovered interface name.
+ * Falls back to the capitalised raw name if no label is configured.
  *
  * Config example:
  *   neighbor_discovery:
@@ -142,7 +155,6 @@ function resolveIfaceLabel(ifaceName, ndCfg) {
     var key = (ifaceName || '').toLowerCase();
     if (labels[key]) return labels[key];
   }
-  // Fallback: capitalise first letter of the raw name
   var raw = ifaceName || 'unknown';
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
@@ -234,14 +246,14 @@ async function poll() {
     });
   });
 
-  // Merge wired clients from OPNsense neighbor discovery when the feature is enabled.
+  // Merge discovered clients from OPNsense neighbor discovery when the feature is enabled.
   // Only hosts not already visible as a ZenWifi Wi-Fi client are included.
   var allClients = dhcpEnriched;
   var ndCfg = config.opnsense && config.opnsense.neighbor_discovery;
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
     var wifiMacs = dhcpEnriched.map(function(c) { return c.mac; });
-    var wired    = opnsense.getWiredClients(wifiMacs);
-    var wiredRows = wired.map(function(c) {
+    var discovered = opnsense.getWiredClients(wifiMacs);
+    var discoveredRows = discovered.map(function(c) {
       var ifaceLabel = resolveIfaceLabel(c.interface, ndCfg);
       var rawIp = c.ip || null;
       return {
@@ -250,22 +262,31 @@ async function poll() {
         hostname:       c.hostname,
         vendor:         ouiModule.lookup(c.mac),
         dhcp:           c.hasReservation ? { hasReservation: true, description: c.description } : null,
-        // "Wired LAN", "Wired IoT", etc. - shown in the Access Point column
-        apName:         'Wired ' + ifaceLabel,
+        // "Discovered LAN", "Discovered IoT", etc. - shown in the Access Point column
+        apName:         'Discovered ' + ifaceLabel,
         apHost:         config.opnsense ? config.opnsense.host : null,
         iface:          c.interface,
         rssi:           null,
         tx_bytes:       null,
         rx_bytes:       null,
         isMeshNode:     false,
-        connectionType: 'wired',
+        connectionType: 'discovered',
         lastSeen:       c.lastSeen,
       };
     });
-    if (wiredRows.length > 0) {
-      logger.debug('[Poll] Merging ' + wiredRows.length + ' wired client(s) from neighbor discovery');
+
+    if (discoveredRows.length > 0) {
+      logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     }
-    allClients = dhcpEnriched.concat(wiredRows);
+
+    // Feed the current discovered client list (with IPs) to the pinger so it
+    // knows which hosts to check. Call this on every poll so new arrivals and
+    // departures from the neighbor table are reflected promptly.
+    pinger.setClients(discoveredRows.map(function(c) {
+      return { mac: c.mac, ip: c.ip };
+    }));
+
+    allClients = dhcpEnriched.concat(discoveredRows);
   }
 
   const freshClients = new Map();
@@ -286,9 +307,9 @@ async function handleDisconnect(mac) {
     logger.warn('[Disconnect] Refusing to disconnect mesh node ' + mac);
     return { success: false, error: 'Disconnecting mesh nodes is not allowed' };
   }
-  if (c.connectionType === 'wired') {
-    logger.warn('[Disconnect] Refusing to disconnect wired client ' + mac);
-    return { success: false, error: 'Disconnecting wired clients is not supported' };
+  if (c.connectionType === 'discovered') {
+    logger.warn('[Disconnect] Refusing to disconnect discovered client ' + mac);
+    return { success: false, error: 'Disconnecting discovered clients is not supported' };
   }
   const ap = aps.find(function(a) { return a.name === c.apName; });
   if (!ap) return { success: false, error: 'AP not found' };
@@ -338,11 +359,18 @@ const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
+logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
 
 mqttModule.connect(config, handleDisconnect);
 
 // Start OPNsense DHCP polling (no-op with a warning if not configured)
 opnsense.startPolling(config.opnsense);
+
+// Start pinger - re-broadcasts state whenever a discovered client flips online/offline
+pinger.start(pingIntervalMinutes, function(mac, online) {
+  logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
+  broadcastState();
+});
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
