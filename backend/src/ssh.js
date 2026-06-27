@@ -168,7 +168,6 @@ async function deauthBroadcom(ap, iface, mac) {
 // ---------------------------------------------------------------------------
 // Atheros helpers
 // ---------------------------------------------------------------------------
-
 async function getInterfacesAtheros(ap) {
   try {
     var out = await runSSH(ap, "ifconfig 2>/dev/null | grep -E '^ath'");
@@ -284,86 +283,119 @@ async function fetchClientlistJson(ap) {
 }
 
 /**
- * Read /tmp/aplist.json and /tmp/relist.json from the master node and build
- * a unified Map<lowercase-mac, nodeId> covering every MAC that belongs to a
- * mesh node (AP BSSIDs and backhaul STA MACs).
+ * Read /tmp/aplist.json and /tmp/relist.json from the master node and
+ * return a Map<lowercase-mac, nodeId> covering every MAC that belongs to
+ * a mesh node (satellites and master alike).
  *
- * Strategy:
- * 1. Parse relist.json first. Each key is the primary MAC of a satellite node.
- *    Map the primary MAC and all its sta MACs to nodeId = primary MAC.
- *    Also build a reverse lookup: staMAC -> nodeId, so we can join aplist.
+ * Two-step strategy:
  *
- * 2. Parse aplist.json. For each node entry try to find the matching relist
- *    nodeId by checking whether any aplist BSSID matches the relist primary
- *    key directly, or appears as a sta MAC in relist. If a match is found,
- *    add all aplist BSSIDs to that same nodeId. If no match is found (master
- *    node) add BSSIDs under their own provisional nodeId so they are still
- *    tagged as mesh infrastructure.
+ * Step 1 - relist.json is authoritative for satellites.
+ *   Each top-level key is the primary backhaul MAC of one satellite (nodeId).
+ *   Its value object contains the sta MACs the master sees that satellite on.
+ *   All MACs are added to a nodeGroups map keyed by nodeId.
+ *
+ * Step 2 - aplist.json adds client-facing BSSIDs.
+ *   aplist node 0 is the master; its BSSIDs get their own provisional nodeId.
+ *   For every other aplist node, scan its BSSIDs against the already-known
+ *   MACs in nodeGroups (both primary keys and sta MACs). The first match
+ *   identifies which satellite nodeId this aplist node belongs to, and all
+ *   BSSIDs are merged into that group. This handles the common case where
+ *   the relist primary key and the aplist BSSID differ by one bit.
+ *
+ * The final flat meshMap maps every individual MAC to its nodeId.
  */
 async function fetchMeshNodeMacs(ap) {
-  var meshMap = new Map();
-  var staMacToNodeId = new Map();
+  // nodeId (string) -> Set of lowercase MACs
+  var nodeGroups = new Map();
 
+  function ensureGroup(nodeId) {
+    if (!nodeGroups.has(nodeId)) nodeGroups.set(nodeId, new Set());
+  }
+
+  function addToGroup(nodeId, mac) {
+    var id = nodeId.toLowerCase();
+    var m = mac.toLowerCase();
+    ensureGroup(id);
+    nodeGroups.get(id).add(m);
+  }
+
+  // Returns the nodeId for a MAC if it already appears in any group, else null.
+  function macToNodeId(mac) {
+    var m = mac.toLowerCase();
+    var found = null;
+    nodeGroups.forEach(function (macs, nodeId) {
+      if (macs.has(m)) found = nodeId;
+    });
+    return found;
+  }
+
+  // Step 1: build satellite node groups from relist.json
   try {
     var reRaw = await runSSH(ap, 'cat /tmp/relist.json 2>/dev/null');
     if (reRaw && reRaw.trim()) {
       var reData = JSON.parse(reRaw);
       Object.keys(reData).forEach(function (primaryMac) {
-        if (!primaryMac || !primaryMac.includes(':')) return;
+        if (!isMac(primaryMac)) return;
         var nodeId = primaryMac.toLowerCase();
-        meshMap.set(nodeId, nodeId);
-        var staMacs = Object.values(reData[primaryMac]).filter(function (m) { return m && m.includes(':'); });
-        staMacs.forEach(function (mac) {
-          var m = mac.toLowerCase();
-          meshMap.set(m, nodeId);
-          staMacToNodeId.set(m, nodeId);
+        addToGroup(nodeId, primaryMac);
+        Object.values(reData[primaryMac]).forEach(function (mac) {
+          if (mac && isMac(mac)) addToGroup(nodeId, mac);
         });
       });
+      logger.info('[SSH] ' + ap.name + ' relist.json: ' + nodeGroups.size + ' satellite(s)');
     }
   } catch (err) {
     logger.warn('[SSH] ' + ap.name + ' relist.json unavailable: ' + err.message);
   }
 
+  // Step 2: join aplist.json BSSIDs into the correct node groups
   try {
     var apRaw = await runSSH(ap, 'cat /tmp/aplist.json 2>/dev/null');
     if (apRaw && apRaw.trim()) {
       var apData = JSON.parse(apRaw);
-      Object.values(apData).forEach(function (node) {
+      var nodeKeys = Object.keys(apData).sort(function (a, b) { return parseInt(a) - parseInt(b); });
+      nodeKeys.forEach(function (nodeIndex) {
+        var node = apData[nodeIndex];
         var bssids = Object.values(node)
-          .filter(function (m) { return m && m.includes(':'); })
+          .filter(function (m) { return m && isMac(m); })
           .map(function (m) { return m.toLowerCase(); });
         if (bssids.length === 0) return;
 
-        // Find which relist nodeId this aplist node belongs to.
-        // Check if any BSSID is a relist primary key or a relist sta MAC.
-        var nodeId = null;
+        if (nodeIndex === '0') {
+          // master: give its BSSIDs a provisional nodeId so they appear in
+          // meshMap and are flagged as infrastructure
+          var masterId = bssids[0];
+          bssids.forEach(function (b) { addToGroup(masterId, b); });
+          return;
+        }
+
+        // satellite: find which relist group any BSSID belongs to
+        var matchedNodeId = null;
         for (var i = 0; i < bssids.length; i++) {
-          if (meshMap.has(bssids[i]) && meshMap.get(bssids[i]) === bssids[i]) {
-            // This BSSID is itself a relist primary key
-            nodeId = bssids[i];
-            break;
-          }
-          if (staMacToNodeId.has(bssids[i])) {
-            // This BSSID appears as a sta MAC in relist
-            nodeId = staMacToNodeId.get(bssids[i]);
-            break;
-          }
+          var hit = macToNodeId(bssids[i]);
+          if (hit) { matchedNodeId = hit; break; }
         }
 
-        if (nodeId === null) {
-          // No relist match: this is the master node or an unknown node.
-          // Tag its BSSIDs under a provisional nodeId (first BSSID).
-          nodeId = bssids[0];
+        if (matchedNodeId) {
+          bssids.forEach(function (b) { addToGroup(matchedNodeId, b); });
+        } else {
+          // no relist entry; use a provisional group so they are still tagged
+          var provId = bssids[0];
+          bssids.forEach(function (b) { addToGroup(provId, b); });
+          logger.warn('[SSH] ' + ap.name + ' aplist node ' + nodeIndex + ' has no relist match, provisional nodeId ' + provId);
         }
-
-        bssids.forEach(function (bssid) {
-          meshMap.set(bssid, nodeId);
-        });
       });
+      logger.info('[SSH] ' + ap.name + ' aplist.json: ' + nodeKeys.length + ' node(s) processed');
     }
   } catch (err) {
     logger.warn('[SSH] ' + ap.name + ' aplist.json unavailable: ' + err.message);
   }
+
+  // Flatten into the final meshMap
+  var meshMap = new Map();
+  nodeGroups.forEach(function (macs, nodeId) {
+    macs.forEach(function (mac) { meshMap.set(mac, nodeId); });
+  });
 
   var nodeCount = new Set(meshMap.values()).size;
   logger.info('[SSH] ' + ap.name + ' mesh MACs mapped: ' + meshMap.size + ' MAC(s) across ' + nodeCount + ' node(s)');
