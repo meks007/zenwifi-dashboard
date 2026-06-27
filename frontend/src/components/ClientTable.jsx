@@ -12,7 +12,6 @@ const COLUMNS = [
   { key: 'rx_bytes', label: 'RX' },
 ];
 
-// Default sort applied on first load and when the user clicks "Reset sort".
 const DEFAULT_SORT = [{ key: 'apName', dir: 'asc' }];
 
 function rssiColor(rssi) {
@@ -32,11 +31,6 @@ function fmtBytes(val) {
   return n + ' B';
 }
 
-/**
- * Convert an IPv4 string to an unsigned 32-bit integer for numeric comparison.
- * Returns null for anything that is not a valid dotted-quad so those rows
- * sort to the end regardless of direction.
- */
 function ipToInt(ip) {
   if (!ip) return null;
   const parts = ip.split('.');
@@ -46,11 +40,6 @@ function ipToInt(ip) {
   return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
 }
 
-/**
- * Compare two client rows for a single sort column.
- * Case-insensitive for string values.
- * Returns a negative, zero, or positive number (direction flip applied by caller).
- */
 function compareByKey(a, b, key) {
   if (key === 'ip') {
     const ai = ipToInt(a.ip);
@@ -65,37 +54,49 @@ function compareByKey(a, b, key) {
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
 
-function VendorCell({ client }) {
-  if (client.isMeshNode) {
-    return (
-      <span className="inline-flex items-center gap-1 bg-indigo-900/40 border border-indigo-700/50 text-indigo-300 text-xs rounded-full px-2 py-0.5 font-medium">
-        <span className="text-indigo-400">&#9737;</span> Mesh Node
-      </span>
-    );
-  }
-  if (!client.vendor) return <span className="text-gray-600">n/a</span>;
-  return <span className="text-gray-400">{client.vendor}</span>;
+// Toggle a value in/out of a Set, returning a new Set.
+function toggleSet(set, value) {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
 }
 
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
-  const [search, setSearch] = useState('');
-  // sortCols: ordered array of { key, dir }.
-  // Index 0 is the primary sort; subsequent entries break ties left to right.
-  // A column absent from this array contributes nothing to the sort order.
-  const [sortCols, setSortCols] = useState(DEFAULT_SORT);
+  const [search, setSearch]     = useState('');
+  // facets: exact-match filters for clickable columns.
+  // Each key holds a Set of selected values; all active sets must match (AND).
+  const [facetVendor, setFacetVendor] = useState(new Set());
+  const [facetAp,     setFacetAp]     = useState(new Set());
+  const [sortCols,    setSortCols]    = useState(DEFAULT_SORT);
 
+  // ---- filtering ----
   const filtered = clients.filter(function(c) {
-    const q = search.toLowerCase();
-    return (
-      (c.mac && c.mac.toLowerCase().includes(q)) ||
-      (c.vendor && c.vendor.toLowerCase().includes(q)) ||
-      (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-      (c.ip && c.ip.toLowerCase().includes(q)) ||
-      (c.apName && c.apName.toLowerCase().includes(q)) ||
-      (c.isMeshNode && 'mesh node'.includes(q))
-    );
+    // Text search
+    if (search) {
+      const q = search.toLowerCase();
+      const textMatch =
+        (c.mac      && c.mac.toLowerCase().includes(q))      ||
+        (c.vendor   && c.vendor.toLowerCase().includes(q))   ||
+        (c.hostname && c.hostname.toLowerCase().includes(q)) ||
+        (c.ip       && c.ip.toLowerCase().includes(q))       ||
+        (c.apName   && c.apName.toLowerCase().includes(q))   ||
+        (c.isMeshNode && 'mesh node'.includes(q));
+      if (!textMatch) return false;
+    }
+    // Facet: vendor
+    if (facetVendor.size > 0) {
+      const v = c.isMeshNode ? 'Mesh Node' : (c.vendor || '');
+      if (!facetVendor.has(v)) return false;
+    }
+    // Facet: access point
+    if (facetAp.size > 0) {
+      if (!facetAp.has(c.apName || '')) return false;
+    }
+    return true;
   });
 
+  // ---- sorting ----
   const sorted = filtered.slice().sort(function(a, b) {
     for (var i = 0; i < sortCols.length; i++) {
       const cmp = compareByKey(a, b, sortCols[i].key);
@@ -104,45 +105,28 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     return 0;
   });
 
-  /**
-   * Click cycles the column through: off -> asc -> desc -> off -> ...
-   *   If the column is not yet in the list it is appended as asc.
-   *   asc  -> desc  (update in place, preserving position)
-   *   desc -> off   (remove from list)
-   *
-   * Shift+click removes the column from the list immediately (unsort).
-   */
+  // ---- sort interaction ----
   function toggleSort(key, event) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
       const existingIdx = prev.findIndex(function(s) { return s.key === key; });
-
       if (shift) {
-        // Remove from list regardless of current state.
         return prev.filter(function(s) { return s.key !== key; });
       }
-
       if (existingIdx === -1) {
-        // Not active: append as asc tie-breaker.
         return prev.concat({ key: key, dir: 'asc' });
       }
-
       const current = prev[existingIdx];
       if (current.dir === 'asc') {
-        // asc -> desc
         return prev.map(function(s, i) {
           return i === existingIdx ? { key: s.key, dir: 'desc' } : s;
         });
       }
-
-      // desc -> off (remove)
       return prev.filter(function(s) { return s.key !== key; });
     });
   }
 
-  function resetSort() {
-    setSortCols(DEFAULT_SORT);
-  }
+  function resetSort() { setSortCols(DEFAULT_SORT); }
 
   function sortMark(key) {
     const idx = sortCols.findIndex(function(s) { return s.key === key; });
@@ -161,28 +145,86 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir;
     });
 
+  // ---- facet interaction ----
+  function clickVendor(value) { setFacetVendor(function(prev) { return toggleSet(prev, value); }); }
+  function clickAp(value)     { setFacetAp(function(prev)     { return toggleSet(prev, value); }); }
+
+  const hasFilters = search || facetVendor.size > 0 || facetAp.size > 0;
+
+  function resetFilters() {
+    setSearch('');
+    setFacetVendor(new Set());
+    setFacetAp(new Set());
+  }
+
+  // ---- facet chip list ----
+  const facetChips = [];
+  facetVendor.forEach(function(v) {
+    facetChips.push({ label: v, remove: function() { setFacetVendor(function(prev) { return toggleSet(prev, v); }); } });
+  });
+  facetAp.forEach(function(v) {
+    facetChips.push({ label: v, remove: function() { setFacetAp(function(prev) { return toggleSet(prev, v); }); } });
+  });
+
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
-          {!isDefaultSort && (
-            <button
-              onClick={resetSort}
-              className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
-              title="Reset to default sort"
-            >
-              Reset sort
-            </button>
-          )}
+      {/* Header bar */}
+      <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
+            {!isDefaultSort && (
+              <button
+                onClick={resetSort}
+                className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
+                title="Reset to default sort"
+              >
+                Reset sort
+              </button>
+            )}
+          </div>
+          {/* Search field with X button */}
+          <div className="relative flex items-center w-full sm:w-80">
+            <input
+              type="text"
+              placeholder="Search MAC, vendor, hostname, IP, AP..."
+              value={search}
+              onChange={function(e) { setSearch(e.target.value); }}
+              className="bg-gray-800 border border-gray-700 rounded-lg pl-3 pr-8 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
+            />
+            {hasFilters && (
+              <button
+                onClick={resetFilters}
+                className="absolute right-2 text-gray-500 hover:text-gray-200 transition-colors leading-none"
+                title="Clear all filters"
+              >
+                &#10005;
+              </button>
+            )}
+          </div>
         </div>
-        <input
-          type="text"
-          placeholder="Search MAC, vendor, hostname, IP, AP..."
-          value={search}
-          onChange={function(e) { setSearch(e.target.value); }}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full sm:w-80"
-        />
+        {/* Active facet chips */}
+        {facetChips.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {facetChips.map(function(chip, i) {
+              return (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-700/50 text-blue-300 text-xs rounded-full pl-2.5 pr-1.5 py-0.5"
+                >
+                  {chip.label}
+                  <button
+                    onClick={chip.remove}
+                    className="text-blue-400 hover:text-white transition-colors leading-none ml-0.5"
+                    title="Remove filter"
+                  >
+                    &#10005;
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="overflow-x-auto">
@@ -220,6 +262,12 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               const isKicking = !!disconnecting[c.mac];
               const txFmt = fmtBytes(c.tx_bytes);
               const rxFmt = fmtBytes(c.rx_bytes);
+
+              // Vendor facet value (mesh nodes use "Mesh Node" as their vendor key)
+              const vendorFacetValue = c.isMeshNode ? 'Mesh Node' : (c.vendor || '');
+              const vendorActive = facetVendor.has(vendorFacetValue);
+              const apActive     = facetAp.has(c.apName || '');
+
               return (
                 <tr
                   key={c.mac}
@@ -229,17 +277,60 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                   }
                 >
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
+
+                  {/* Vendor cell -- clickable */}
                   <td className="px-4 py-3 text-xs">
-                    <VendorCell client={c} />
+                    {c.isMeshNode ? (
+                      <button
+                        onClick={function() { clickVendor('Mesh Node'); }}
+                        className={
+                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium border transition-colors cursor-pointer ' +
+                          (vendorActive
+                            ? 'bg-indigo-800/60 border-indigo-500 text-indigo-200'
+                            : 'bg-indigo-900/40 border-indigo-700/50 text-indigo-300 hover:bg-indigo-800/50 hover:border-indigo-600')
+                        }
+                        title="Filter by Mesh Node"
+                      >
+                        <span className="text-indigo-400">&#9737;</span> Mesh Node
+                      </button>
+                    ) : c.vendor ? (
+                      <button
+                        onClick={function() { clickVendor(c.vendor); }}
+                        className={
+                          'rounded px-1.5 py-0.5 transition-colors cursor-pointer border ' +
+                          (vendorActive
+                            ? 'bg-blue-900/40 border-blue-600 text-blue-200'
+                            : 'border-transparent text-gray-400 hover:bg-gray-800 hover:border-gray-600 hover:text-gray-200')
+                        }
+                        title={'Filter by ' + c.vendor}
+                      >
+                        {c.vendor}
+                      </button>
+                    ) : (
+                      <span className="text-gray-600">n/a</span>
+                    )}
                   </td>
+
                   <td className="px-4 py-3 text-gray-300">{c.hostname || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{c.ip || <span className="text-gray-600">n/a</span>}</td>
+
+                  {/* Access Point cell -- clickable */}
                   <td className="px-4 py-3">
-                    <span className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs text-gray-300">
-                      <span className={'w-1.5 h-1.5 rounded-full inline-block ' + (c.isMeshNode ? 'bg-indigo-400' : 'bg-green-400')}></span>
+                    <button
+                      onClick={function() { clickAp(c.apName || ''); }}
+                      className={
+                        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs border transition-colors cursor-pointer ' +
+                        (apActive
+                          ? 'bg-blue-900/40 border-blue-600 text-blue-200'
+                          : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:border-gray-500')
+                      }
+                      title={'Filter by ' + c.apName}
+                    >
+                      <span className={'w-1.5 h-1.5 rounded-full inline-block flex-shrink-0 ' + (c.isMeshNode ? 'bg-indigo-400' : 'bg-green-400')}></span>
                       {c.apName}
-                    </span>
+                    </button>
                   </td>
+
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{c.iface || 'n/a'}</td>
                   <td className={'px-4 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
                     {c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
