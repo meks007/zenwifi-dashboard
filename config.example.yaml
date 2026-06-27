@@ -29,15 +29,20 @@ access_points:
     username: admin
     password: secret
     master: true
+    # driver: broadcom   # optional override; auto-detected if omitted
 
   - name: "Office"
     host: 192.168.1.2
     ssh_port: 22
     username: admin
     password: secret
+    # driver: broadcom
 
+  # Example: Atheros-based node (e.g. ZenWifi AC Mini with stock ASUS firmware)
+  # Driver is auto-detected via SSH probe; override only if detection fails.
   - name: "Bedroom"
     host: 192.168.1.3
     ssh_port: 22
     username: admin
     password: secret
+    # driver: atheros
