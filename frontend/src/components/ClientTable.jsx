@@ -32,10 +32,6 @@ function fmtBytes(val) {
   return n + ' B';
 }
 
-/**
- * Extract the OUI prefix (first 3 octets, uppercase) from a MAC string.
- * Returns null for invalid MACs.
- */
 function macOui(mac) {
   if (!mac) return null;
   const parts = mac.split(':');
@@ -43,11 +39,6 @@ function macOui(mac) {
   return (parts[0] + ':' + parts[1] + ':' + parts[2]).toUpperCase();
 }
 
-/**
- * Convert an IPv4 string to an unsigned 32-bit integer for numeric comparison.
- * Returns null for anything that is not a valid dotted-quad so those rows
- * sort to the end regardless of direction.
- */
 function ipToInt(ip) {
   if (!ip) return null;
   const parts = ip.split('.');
@@ -57,11 +48,6 @@ function ipToInt(ip) {
   return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
 }
 
-/**
- * Compare two client rows for a single sort column.
- * Case-insensitive for string values.
- * Returns a negative, zero, or positive number (direction flip applied by caller).
- */
 function compareByKey(a, b, key) {
   if (key === 'ip') {
     const ai = ipToInt(a.ip);
@@ -78,10 +64,10 @@ function compareByKey(a, b, key) {
 
 /**
  * Vendor column cell.
- * - Mesh nodes: show the Mesh Node badge only.
- * - All other clients (Wi-Fi and wired): show OUI chip + vendor name.
- *   Wired clients carry no extra badge here; the Access Point column
- *   already labels them as "Wired <Interface>".
+ * Mesh nodes show the Mesh Node badge only.
+ * All other clients (Wi-Fi and wired) show OUI chip + vendor name.
+ * Wired clients carry no extra badge here; the Access Point column
+ * already labels them as "Wired <Interface>".
  */
 function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiClick }) {
   if (client.isMeshNode) {
@@ -132,13 +118,7 @@ function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiCli
 
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch] = useState('');
-  // sortCols: ordered array of { key, dir }.
-  // Index 0 is the primary sort; subsequent entries break ties left to right.
-  // A column absent from this array contributes nothing to the sort order.
   const [sortCols, setSortCols] = useState(DEFAULT_SORT);
-
-  // Facet filter sets: multiple values within a facet are ORed;
-  // multiple facets are ANDed.
   const [activeAps, setActiveAps]         = useState(new Set());
   const [activeVendors, setActiveVendors] = useState(new Set());
   const [activeOuis, setActiveOuis]       = useState(new Set());
@@ -188,14 +168,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     return 0;
   });
 
-  /**
-   * Click cycles the column through: off -> asc -> desc -> off -> ...
-   *   If the column is not yet in the list it is appended as asc.
-   *   asc  -> desc  (update in place, preserving position)
-   *   desc -> off   (remove from list)
-   *
-   * Shift+click removes the column from the list immediately (unsort).
-   */
   function toggleSort(key, event) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
@@ -332,12 +304,15 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               const txFmt = fmtBytes(c.tx_bytes);
               const rxFmt = fmtBytes(c.rx_bytes);
               const isWired = c.connectionType === 'wired';
+              const isMesh  = c.isMeshNode;
               return (
                 <tr
                   key={c.mac}
                   className={
                     'border-b border-gray-800 last:border-0 transition-colors ' +
-                    (c.isMeshNode ? 'bg-indigo-950/20 hover:bg-indigo-950/30' : 'hover:bg-gray-800/50')
+                    (isMesh  ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
+                     isWired ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
+                               'hover:bg-gray-800/50')
                   }
                 >
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
@@ -361,7 +336,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     >
                       <span className={
                         'w-1.5 h-1.5 rounded-full inline-block ' +
-                        (c.isMeshNode ? 'bg-indigo-400' : isWired ? 'bg-amber-400' : 'bg-green-400')
+                        (isMesh ? 'bg-indigo-400' : isWired ? 'bg-amber-400' : 'bg-green-400')
                       }></span>
                       {c.apName}
                     </button>
@@ -377,7 +352,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     {rxFmt !== null ? rxFmt : <span className="text-gray-600">n/a</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {c.isMeshNode ? (
+                    {isMesh ? (
                       <span className="text-xs text-gray-600 px-3 py-1.5">Infrastructure</span>
                     ) : isWired ? (
                       <span className="text-xs text-gray-600 px-3 py-1.5">Wired</span>
