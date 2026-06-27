@@ -31,10 +31,41 @@ Supports:
   - Shown with a distinct visual style
   - **Not disconnectable**
 
+### Discovered clients (OPNsense Neighbor Discovery)
+
+When OPNsense Neighbor Discovery is enabled, the backend merges wired and non-WiFi hosts
+that are visible on configured OPNsense interfaces but not already connected via ZenWifi Wi-Fi:
+
+- Hosts appear as **"Discovered \<Interface\>"** rows (e.g. "Discovered LAN")
+- Interface names can be mapped to human-readable labels via `interface_labels` in config
+- Hosts last seen more than 24 hours ago are ignored
+- Discovered clients are **pinged via ICMP** to verify reachability; offline hosts are hidden
+  from the frontend until they respond again (see [Pinger](#pinger) below)
+- Discovered clients cannot be disconnected from the UI
+- Requires OPNsense 26.1+ with the **Host Discovery** service enabled and the
+  **Host Discovery: Search** API privilege granted
+
+### Pinger
+
+The backend runs periodic ICMP reachability checks against all discovered (non-WiFi) clients:
+
+- 3 ICMP packets per client, 1 s timeout each
+- Clients that fail all 3 packets are hidden from the frontend until they respond again
+- Newly discovered clients are pinged immediately (rather than waiting for the next scheduled cycle)
+- Ping interval is configurable via `ping_interval_minutes` (default: 5 minutes)
+- Uses the system `ping` binary - no extra npm package required
+
 ### Client control
 
-- Disconnect (kick) regular clients from the UI
+- Disconnect (kick) regular Wi-Fi clients from the UI
 - Disconnect clients via MQTT (`{prefix}/clients/{mac}/disconnect`)
+
+### Client table features
+
+- **Multi-column sort**: click column headers to sort; Shift+click a column header to remove it from the sort order
+- **Active filter chips**: OUI, vendor, and AP facets are shown as removable chips above the table
+- **Search**: matches MAC, vendor, hostname, IP, AP name, "mesh node", and "discovered"
+- **Row badges**: mesh infrastructure rows show an "Infrastructure" badge; discovered rows show a "Discovered" badge
 
 ### MQTT integration
 
@@ -46,18 +77,28 @@ Supports:
 ### Resilience
 
 - **AP failure resilience**: an AP's client list is only cleared after **3 consecutive poll failures**
+- **Interface discovery caching**: wireless interface discovery results are cached and reused across
+  poll cycles (configurable via `iface_discovery_interval`), reducing SSH overhead significantly
 - Configurable poll interval, log ring buffer size, and debug logging
 
-### Optional OPNsense DHCP enrichment
+### Optional OPNsense integration
 
-If configured, the backend enriches clients using OPNsense DHCP data:
+If configured, the backend integrates with OPNsense for two purposes:
+
+#### DHCP enrichment
 
 - **Dynamic leases** via OPNsense REST API (IP, hostname, lease end, lease type)
 - **Static reservations** via:
   - Kea reservations endpoint (if available), otherwise
   - SSH read of `/conf/config.xml` static mappings
+- The backend automatically handles OPNsense's numbered SSH console menu (sends `8` to open a shell)
 
-The enriched data is exposed under `client.dhcp.*` and (for non-mesh clients) the dashboard will promote DHCP hostname/IP to the top-level fields when present.
+The enriched data is exposed under `client.dhcp.*` and (for non-mesh clients) the dashboard
+promotes DHCP hostname/IP to the top-level fields when present.
+
+#### Neighbor Discovery (discovered clients)
+
+See [Discovered clients](#discovered-clients-opnsense-neighbor-discovery) above.
 
 ---
 
@@ -100,12 +141,28 @@ mqtt:
 # Polling involves multiple SSH commands per AP, so keep this sane (>=30 recommended).
 polling_interval_seconds: 30
 
+# How often to re-run wireless interface discovery per AP (in poll cycles).
+# Discovery runs on the very first poll and then once every N cycles.
+# Example: polling_interval_seconds: 30, iface_discovery_interval: 10
+#   -> discovery runs on poll 0, 10, 20, 30, ... (every ~5 minutes)
+# Set to 1 to disable caching and always run discovery. Default: 10.
+iface_discovery_interval: 10
+
 # Size of the in-memory log ring buffer (number of log lines kept).
 # Older entries are dropped when the buffer is full. Default: 500.
 log_buffer_size: 500
 
 # Set to true to log every SSH command and its output (very verbose).
 debug_logging: false
+
+# Whether to include IPv6 addresses in the IP column.
+# Defaults to false: only IPv4 addresses are shown.
+show_ipv6: false
+
+# How often (in minutes) to ping discovered (non-WiFi) clients to check reachability.
+# 3 ICMP packets are sent per client. Clients that fail all 3 are hidden from the
+# frontend until they respond again. Default: 5.
+ping_interval_minutes: 5
 
 access_points:
   # Mark exactly one AP as master: true. The master node maintains
@@ -127,7 +184,6 @@ access_points:
     # driver: broadcom
 
   # Example: Atheros-based node (e.g. ZenWifi AC Mini with stock ASUS firmware)
-  # Driver is auto-detected via SSH probe; override only if detection fails.
   - name: "Bedroom"
     host: 192.168.1.3
     ssh_port: 22
@@ -136,42 +192,62 @@ access_points:
     # driver: atheros
 
 # ---------------------------------------------------------------------------
-# OPNsense DHCP integration (optional)
+# OPNsense integration (optional)
 # ---------------------------------------------------------------------------
 # When configured, the backend queries OPNsense for:
-# - Dynamic leases : via REST API -> client.dhcp.ip / hostname / leaseEnds
-# - Static mappings : via SSH -> client.dhcp.description / hasReservation
-#
-# OPNsense is a separate box with its own IP and credentials.
+# - Dynamic leases        : via REST API -> client.dhcp.ip / hostname / leaseEnds
+# - Static mappings       : via SSH -> client.dhcp.description / hasReservation
+# - Neighbor discovery    : via REST API -> discovered clients on configured interfaces
 #
 # REST API credentials:
-# System -> Access -> Users -> -> API keys
-# Required privilege: DHCP: Leases (read-only is sufficient)
+# System -> Access -> Users -> <user> -> API keys
+# Required privileges:
+#   - DHCP: Leases (for lease enrichment)
+#   - Host Discovery: Search (for neighbor discovery)
 #
-# SSH credentials (same field names as access_points for consistency):
-# System -> Settings -> Administration -> Secure Shell -> enable SSH
+# SSH credentials: the backend automatically handles OPNsense's numbered
+# console menu by sending "8" to open a shell.
 # Must connect as root.
-# ssh_host defaults to the value of 'host' above if omitted.
 #
-# Remove this block or leave host empty to disable DHCP enrichment entirely.
+# Remove this block or leave host empty to disable OPNsense integration.
 # ---------------------------------------------------------------------------
 opnsense:
-  # --- REST API (leases) ---
+  # --- REST API (leases + neighbor discovery) ---
   host: 192.168.x.x  # OPNsense IP or hostname
-  port: 443          # HTTPS port (default: 443)
+  port: 443           # HTTPS port (default: 443)
   api_key: your-api-key
   api_secret: your-api-secret
-  verify_ssl: false  # Set to true if OPNsense has a valid/trusted TLS cert
+  verify_ssl: false   # Set to true if OPNsense has a valid/trusted TLS cert
 
   # --- SSH (static reservations via /conf/config.xml) ---
   ssh_host: 192.168.x.x  # defaults to 'host' above if omitted
   ssh_port: 22
   username: root
   password: your-root-password
-  # key_path: /run/secrets/opnsense_id_rsa  # path to private key (alternative to password)
+  # key_path: /run/secrets/opnsense_id_rsa  # path to private key
 
   # --- Polling ---
   poll_interval: 60  # How often (seconds) to refresh DHCP data
+
+  # --- Neighbor Discovery (discovered client detection) ---
+  # Requires OPNsense 26.1+ and the "Host Discovery" service enabled
+  # (Interfaces -> Neighbors -> Automatic Discovery).
+  # The API key user needs the "Host Discovery: Search" privilege.
+  # Hosts last seen more than 24 hours ago are ignored.
+  # Hosts already connected via ZenWifi Wi-Fi are never shown as discovered.
+  #
+  # interface_labels: optional map of OPNsense interface name (lowercase)
+  # to a human-readable label shown in the "Access Point" column.
+  neighbor_discovery:
+    enabled: true
+    interfaces:
+      - lan
+      # - opt1
+      # - vlan10
+    interface_labels:
+      lan: "LAN"
+      # opt1: "IoT"
+      # vlan10: "Servers"
 ```
 
 ### Config reference
@@ -184,8 +260,11 @@ opnsense:
 | `mqtt.password` | required | MQTT password |
 | `mqtt.topic_prefix` | `zenwifi` | Root topic prefix |
 | `polling_interval_seconds` | `30` | Seconds between AP polls |
+| `iface_discovery_interval` | `10` | Re-run interface discovery every N poll cycles |
 | `log_buffer_size` | `500` | In-memory log ring buffer size (lines) |
 | `debug_logging` | `false` | Verbose SSH command logging |
+| `show_ipv6` | `false` | Show IPv6 addresses in the IP column |
+| `ping_interval_minutes` | `5` | How often (minutes) to ICMP-ping discovered clients |
 | `access_points[].name` | required | Display name |
 | `access_points[].host` | required | AP hostname or IP |
 | `access_points[].ssh_port` | `22` | SSH port |
@@ -193,11 +272,16 @@ opnsense:
 | `access_points[].password` | required | SSH password |
 | `access_points[].master` | `false` | Mark exactly one AP as master |
 | `access_points[].driver` | auto | `broadcom` or `atheros`; auto-detected if omitted |
-| `opnsense.*` | optional | OPNsense DHCP enrichment (see below) |
+| `opnsense.*` | optional | OPNsense integration (see below) |
+| `opnsense.neighbor_discovery.enabled` | `false` | Enable OPNsense Neighbor Discovery |
+| `opnsense.neighbor_discovery.interfaces` | `[]` | OPNsense interfaces to watch |
+| `opnsense.neighbor_discovery.interface_labels` | `{}` | Human-readable labels for interface names |
 
 ### Driver detection
 
-The backend probes each AP via SSH to determine whether it uses the Broadcom (`wl`) or Atheros/Qualcomm (`wlanconfig`) wireless driver. The result is cached for the lifetime of the process.
+The backend probes each AP via SSH to determine whether it uses the Broadcom (`wl`) or
+Atheros/Qualcomm (`wlanconfig`) wireless driver. The result is cached for the lifetime of the
+process.
 
 Set `driver:` explicitly if auto-detection fails.
 
@@ -253,7 +337,8 @@ Optional (only needed for reservation enrichment):
 
 ### LWT
 
-The broker publishes `offline` to `{prefix}/bridge/state` (retained) if the backend process disconnects unexpectedly. The backend publishes `online` immediately on connect.
+The broker publishes `offline` to `{prefix}/bridge/state` (retained) if the backend process
+disconnects unexpectedly. The backend publishes `online` immediately on connect.
 
 ### Disconnect a client via MQTT
 
@@ -291,6 +376,7 @@ mosquitto_pub -t zenwifi/clients/aa:bb:cc:dd:ee:ff/disconnect -m 1
 | Purpose | Command |
 |---|---|
 | ARP table (IP fallback) | `cat /proc/net/arp` |
+| Neighbor table (IP resolution) | `ip neigh` (master node only) |
 | Client IPs and RSSI | `cat /tmp/clientlist.json` (master node only) |
 | Mesh AP list | `cat /tmp/aplist.json` (master node only) |
 | Mesh relay list | `cat /tmp/relist.json` (master node only) |
@@ -299,7 +385,8 @@ mosquitto_pub -t zenwifi/clients/aa:bb:cc:dd:ee:ff/disconnect -m 1
 
 ## Mesh Node Handling
 
-On AiMesh setups the master router exposes `/tmp/aplist.json` and `/tmp/relist.json`, which map backhaul radio MAC addresses to their physical node.
+On AiMesh setups the master router exposes `/tmp/aplist.json` and `/tmp/relist.json`, which map
+backhaul radio MAC addresses to their physical node.
 
 The backend reads these once per poll cycle and uses them to:
 
@@ -310,7 +397,8 @@ The backend reads these once per poll cycle and uses them to:
 
 ## AP Failure Handling
 
-If an AP cannot be reached via SSH, its last known client list is retained until 3 consecutive poll failures occur. This prevents brief network interruptions from clearing the client list.
+If an AP cannot be reached via SSH, its last known client list is retained until 3 consecutive
+poll failures occur. This prevents brief network interruptions from clearing the client list.
 
 ---
 
