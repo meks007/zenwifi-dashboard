@@ -39,25 +39,58 @@ function runSSH(ap, command) {
   });
 }
 
+// Probe a single interface: returns true if wl considers it a valid wireless BSS
+async function probeIface(ap, iface) {
+  try {
+    // wl assoclist exits 0 on a valid wireless interface, non-zero otherwise
+    await runSSH(ap, 'wl -i ' + iface + ' assoclist > /dev/null 2>&1');
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Discover wireless interfaces using ip link, then validate each wl* candidate
+// with a wl probe. Only wl* interfaces are considered (eth* interfaces either
+// fail the probe or are duplicates of the wl* BSS interfaces on XT8 hardware).
 async function getWirelessInterfaces(ap) {
   try {
-    const out = await runSSH(ap, 'nvram get wl_ifnames 2>/dev/null || echo ""');
-    const ifaces = out.trim().split(/\s+/).filter(Boolean);
-    if (ifaces.length > 0) {
-      logger.info('[SSH] ' + ap.name + ' interfaces from nvram: ' + ifaces.join(', '));
-      return ifaces;
+    const out = await runSSH(
+      ap,
+      "ip -o link show | awk -F': ' '{print $2}' | grep -E '^wl'"
+    );
+    const candidates = out.trim().split(/\n/).map(function(s) { return s.trim(); }).filter(Boolean);
+
+    if (candidates.length === 0) {
+      logger.warn('[SSH] ' + ap.name + ' no wl* interfaces found via ip link, using fallback [eth4, eth5, eth6]');
+      return ['eth4', 'eth5', 'eth6'];
     }
-    logger.warn('[SSH] ' + ap.name + ' no interfaces from nvram, falling back to [eth1, eth2, eth3]');
-    return ['eth1', 'eth2', 'eth3'];
+
+    // Validate each candidate: keep only those wl responds to
+    const probeResults = await Promise.all(candidates.map(async function(iface) {
+      const ok = await probeIface(ap, iface);
+      logger.debug('[SSH] ' + ap.name + ' probe ' + iface + ': ' + (ok ? 'ok' : 'skip'));
+      return ok ? iface : null;
+    }));
+
+    const valid = probeResults.filter(Boolean);
+
+    if (valid.length === 0) {
+      logger.warn('[SSH] ' + ap.name + ' no wl* interfaces passed probe, using fallback [eth4, eth5, eth6]');
+      return ['eth4', 'eth5', 'eth6'];
+    }
+
+    logger.info('[SSH] ' + ap.name + ' wireless interfaces: ' + valid.join(', '));
+    return valid;
+
   } catch (err) {
-    logger.warn('[SSH] ' + ap.name + ' interface discovery failed (' + err.message + '), using fallback');
-    return ['eth1', 'eth2', 'eth3'];
+    logger.warn('[SSH] ' + ap.name + ' interface discovery failed (' + err.message + '), using fallback [eth4, eth5, eth6]');
+    return ['eth4', 'eth5', 'eth6'];
   }
 }
 
 async function fetchClientsFromAP(ap) {
   const clients = [];
-
   logger.info('[SSH] Polling AP: ' + ap.name + ' at ' + ap.host + ':' + (ap.ssh_port || 22));
 
   try {
@@ -106,7 +139,6 @@ async function fetchClientsFromAP(ap) {
           .split('\n')
           .map(function(l) { return l.replace(/^assoclist\s+/i, '').trim().toLowerCase(); })
           .filter(function(m) { return /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(m); });
-
         logger.info('[SSH] ' + ap.name + ' iface ' + iface + ': ' + macs.length + ' client(s) associated');
 
         for (let j = 0; j < macs.length; j++) {
