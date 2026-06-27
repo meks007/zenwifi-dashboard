@@ -48,17 +48,20 @@ access_points:
     # driver: atheros
 
 # ---------------------------------------------------------------------------
-# OPNsense DHCP integration (optional)
+# OPNsense integration (optional)
 # ---------------------------------------------------------------------------
 # When configured, the backend queries OPNsense for:
-#   - Dynamic leases  : via REST API  -> client.dhcp.ip / hostname / leaseEnds
-#   - Static mappings : via SSH       -> client.dhcp.description / hasReservation
+#   - Dynamic leases       : via REST API  -> client.dhcp.ip / hostname / leaseEnds
+#   - Static mappings      : via SSH       -> client.dhcp.description / hasReservation
+#   - Neighbor discovery   : via REST API  -> wired clients visible on configured interfaces
 #
 # OPNsense is a separate box with its own IP and credentials.
 #
 # REST API credentials:
 #   System -> Access -> Users -> <user> -> API keys
-#   Required privilege: DHCP: Leases (read-only is sufficient)
+#   Required privileges:
+#     - DHCP: Leases           (for lease enrichment)
+#     - Host Discovery: Search (for neighbor discovery / wired clients)
 #
 # SSH credentials (same field names as access_points for consistency):
 #   System -> Settings -> Administration -> Secure Shell -> enable SSH
@@ -66,10 +69,10 @@ access_points:
 #   the backend automatically sends "8" to select the Shell option.
 #   ssh_host defaults to the value of 'host' above if omitted.
 #
-# Remove this block or leave host empty to disable DHCP enrichment entirely.
+# Remove this block or leave host empty to disable OPNsense integration entirely.
 # ---------------------------------------------------------------------------
 opnsense:
-  # --- REST API (leases) ---
+  # --- REST API (leases + neighbor discovery) ---
   host: 192.168.x.x        # OPNsense IP or hostname
   port: 443                 # HTTPS port (default: 443)
   api_key: your-api-key
@@ -85,3 +88,20 @@ opnsense:
 
   # --- Polling ---
   poll_interval: 60         # How often (seconds) to refresh DHCP data
+
+  # --- Neighbor Discovery (wired client detection) ---
+  # Requires OPNsense 26.1+ and the "Host Discovery" service to be enabled
+  # (Interfaces -> Neighbors -> Automatic Discovery).
+  #
+  # Set enabled: false (or remove this block) to disable the feature entirely.
+  # When enabled, hosts last seen more than 24 hours ago are ignored.
+  # Hosts already connected via ZenWifi Wi-Fi are never shown as wired.
+  #
+  # The API key user needs the "Host Discovery: Search" privilege in addition
+  # to the DHCP privilege used for lease enrichment.
+  neighbor_discovery:
+    enabled: true
+    interfaces:
+      - lan
+      # - opt1
+      # - vlan10
