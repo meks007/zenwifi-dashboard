@@ -445,6 +445,8 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
   try {
     var driver = await detectDriver(ap);
 
+    // /proc/net/arp: used for regular client IP resolution.
+    // Stale entries are acceptable for clients (e.g. sleeping devices).
     var arpOut = await runSSH(ap, 'cat /proc/net/arp 2>/dev/null || echo ""');
     var arpMacToIp = {};
     arpOut.split('\n').forEach(function (line) {
@@ -454,6 +456,24 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
       }
     });
     logger.debug('[SSH] ' + ap.name + ' ARP entries: ' + Object.keys(arpMacToIp).length);
+
+    // ip neigh show, REACHABLE only: used for mesh node IP resolution.
+    // /proc/net/arp can accumulate many stale entries for the same MAC
+    // (multiple old IPs), causing the wrong IP to be shown for a node.
+    // Filtering to REACHABLE guarantees the entry is currently confirmed.
+    var neighOut = await runSSH(ap, 'ip neigh show 2>/dev/null || echo ""');
+    var neighMacToIp = {};
+    neighOut.split('\n').forEach(function (line) {
+      var parts = line.trim().split(new RegExp('\\s+'));
+      var macIdx = parts.indexOf('lladdr') + 1;
+      if (macIdx > 0 && macIdx < parts.length) {
+        var state = parts[parts.length - 1].toUpperCase();
+        if (state === 'REACHABLE') {
+          neighMacToIp[parts[macIdx].toLowerCase()] = parts[0];
+        }
+      }
+    });
+    logger.debug('[SSH] ' + ap.name + ' REACHABLE neigh entries: ' + Object.keys(neighMacToIp).length);
 
     var seenMacs = new Set();
 
@@ -467,6 +487,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
 
           // One SSH call fetches stats for all stations on this interface
           var statsMap = await getAllStaStatsAtheros(ap, athIface);
+
           for (var si = 0; si < stations.length; si++) {
             var staMac = stations[si].mac;
             var staRssi = stations[si].rssi;
@@ -474,7 +495,8 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             seenMacs.add(staMac);
             var meshNodeId = meshMap ? (meshMap.get(staMac) || null) : null;
             var clEntry = clientlistMap ? clientlistMap[staMac] : null;
-            var ip = (clEntry && clEntry.ip) ? clEntry.ip : (arpMacToIp[staMac] || null);
+            var ip = (clEntry && clEntry.ip) ? clEntry.ip
+              : (meshNodeId !== null ? (neighMacToIp[staMac] || null) : (arpMacToIp[staMac] || null));
             var rssi = (clEntry && clEntry.rssi !== null) ? clEntry.rssi : staRssi;
             var stats = statsMap.get(staMac) || { tx_bytes: null, rx_bytes: null };
             clients.push({
@@ -501,7 +523,8 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             seenMacs.add(mac);
             var meshId = meshMap ? (meshMap.get(mac) || null) : null;
             var clE = clientlistMap ? clientlistMap[mac] : null;
-            var macIp = (clE && clE.ip) ? clE.ip : (arpMacToIp[mac] || null);
+            var macIp = (clE && clE.ip) ? clE.ip
+              : (meshId !== null ? (neighMacToIp[mac] || null) : (arpMacToIp[mac] || null));
             var macRssi = (clE && clE.rssi !== null) ? clE.rssi : null;
             if (macRssi === null) {
               macRssi = await getRssiBroadcom(ap, bcIface, mac);
