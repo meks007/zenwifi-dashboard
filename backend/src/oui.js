@@ -1,25 +1,24 @@
-// MAC OUI vendor lookup using the 'oui' npm package.
-// Falls back to 'Unknown' if not found.
+// MAC OUI vendor lookup using the 'oui-data' npm package.
+// oui-data exports a plain JSON object keyed by 6-digit uppercase OUI hex (e.g. "203706").
+// Falls back to null if not found or package unavailable.
 
-let ouiLookup = null;
+let ouiData = null;
 
-function init() {
-  try {
-    ouiLookup = require('oui');
-  } catch (e) {
-    console.warn('[OUI] oui package not available, vendor lookup disabled:', e.message);
-  }
+try {
+  ouiData = require('oui-data');
+} catch (e) {
+  console.warn('[OUI] oui-data package not available, vendor lookup disabled:', e.message);
 }
 
-init();
-
 function lookup(mac) {
-  if (!ouiLookup || !mac) return null;
+  if (!ouiData || !mac) return null;
   try {
-    const result = ouiLookup(mac.toUpperCase());
-    if (!result) return null;
-    // The oui package may return a multi-line string; use only the first line
-    return result.split('\n')[0].trim() || null;
+    // Normalise: strip separators, uppercase, take first 6 hex chars
+    const hex = mac.replace(/[:\-\.]/g, '').toUpperCase().slice(0, 6);
+    const entry = ouiData[hex];
+    if (!entry) return null;
+    // entry is a multi-line string; return only the first line (company name)
+    return entry.split('\n')[0].trim() || null;
   } catch (_) {
     return null;
   }
