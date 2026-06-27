@@ -342,11 +342,11 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                   </td>
                   <td className="px-4 py-3 text-gray-300">{c.hostname || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{c.ip || <span className="text-gray-600">n/a</span>}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-left">
                     <button
                       onClick={function() { toggleFacet(setActiveAps, c.apName); }}
                       title={'Filter by AP: ' + c.apName}
-                      className="flex w-full items-center justify-start gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300"
+                      className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300 text-left"
                       style={activeAps.has(c.apName) ? { background: 'rgba(30,58,138,0.3)', borderColor: 'rgba(37,99,235,0.5)', color: 'rgb(147,197,253)' } : {}}
                     >
                       <span className={
