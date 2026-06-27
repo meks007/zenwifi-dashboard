@@ -1,10 +1,16 @@
-// Simple in-memory log buffer + stdout logger.
-// Intended for home-lab use; no PII redaction.
+// Centralised in-memory ring-buffer logger.
+// Debug logging is controlled at runtime via setDebug(bool),
+// which is called from index.js after the config is loaded.
 
-const MAX_LINES = parseInt(process.env.LOG_MAX_LINES || '500', 10);
+const MAX_LINES = 500;
 
 let buffer = [];
-let wsBroadcast = null; // function(payload)
+let wsBroadcast = null;
+let debugEnabled = false;
+
+function setDebug(enabled) {
+  debugEnabled = !!enabled;
+}
 
 function setBroadcaster(fn) {
   wsBroadcast = fn;
@@ -17,8 +23,8 @@ function nowIso() {
 function pushLine(level, msg, meta) {
   const entry = {
     ts: nowIso(),
-    level,
-    msg,
+    level: level,
+    msg: msg,
     meta: meta || null,
   };
 
@@ -26,22 +32,19 @@ function pushLine(level, msg, meta) {
   if (buffer.length > MAX_LINES) buffer = buffer.slice(buffer.length - MAX_LINES);
 
   const metaStr = meta ? ' ' + JSON.stringify(meta) : '';
-  // Always log to stdout
-  console.log('[' + entry.ts + ']' + ' [' + level.toUpperCase() + '] ' + msg + metaStr);
+  process.stdout.write('[' + entry.ts + '] [' + level.toUpperCase() + '] ' + msg + metaStr + '\n');
 
   if (wsBroadcast) {
-    try {
-      wsBroadcast({ type: 'log', entry });
-    } catch (_) {}
+    try { wsBroadcast({ type: 'log', entry: entry }); } catch (_) {}
   }
 }
 
 function info(msg, meta) { pushLine('info', msg, meta); }
 function warn(msg, meta) { pushLine('warn', msg, meta); }
 function error(msg, meta) { pushLine('error', msg, meta); }
+
 function debug(msg, meta) {
-  const enabled = process.env.DEBUG_LOGGING === '1' || process.env.DEBUG_LOGGING === 'true';
-  if (!enabled) return;
+  if (!debugEnabled) return;
   pushLine('debug', msg, meta);
 }
 
@@ -49,4 +52,4 @@ function list() {
   return buffer.slice();
 }
 
-module.exports = { info, warn, error, debug, list, setBroadcaster };
+module.exports = { info, warn, error, debug, list, setBroadcaster, setDebug };
