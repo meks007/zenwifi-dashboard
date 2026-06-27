@@ -8,7 +8,6 @@ var MAC_RE = new RegExp('^([0-9a-f]{2}:){5}[0-9a-f]{2}$');
 function isMac(str) {
   return MAC_RE.test(str);
 }
-
 function runSSH(ap, command) {
   return new Promise(function (resolve, reject) {
     var conn = new Client();
@@ -71,7 +70,6 @@ async function detectDriver(ap) {
   logger.warn('[SSH] ' + ap.name + ' could not detect driver, defaulting to broadcom');
   return 'broadcom';
 }
-
 // ---------------------------------------------------------------------------
 // Broadcom helpers
 // ---------------------------------------------------------------------------
@@ -116,7 +114,6 @@ async function getAssoclistBroadcom(ap, iface) {
     .map(function (l) { return l.replace(new RegExp('^assoclist\\s+', 'i'), '').trim().toLowerCase(); })
     .filter(isMac);
 }
-
 async function getRssiBroadcom(ap, iface, mac) {
   try {
     var out = await runSSH(ap, 'wl -i ' + iface + ' rssi ' + mac + ' 2>/dev/null || echo ""');
@@ -157,7 +154,6 @@ async function getStatsBroadcom(ap, iface, mac) {
     return { tx_bytes: null, rx_bytes: null };
   }
 }
-
 async function deauthBroadcom(ap, iface, mac) {
   await runSSH(ap, 'wl -i ' + iface + ' deauthenticate ' + mac + ' 2>/dev/null');
 }
@@ -194,7 +190,6 @@ function parseWlanconfig(output) {
   });
   return clients;
 }
-
 async function getAssoclistAtheros(ap, iface) {
   var out = await runSSH(ap, 'wlanconfig ' + iface + ' list sta 2>/dev/null || echo ""');
   return parseWlanconfig(out);
@@ -254,7 +249,6 @@ async function getAllStaStatsAtheros(ap, iface) {
       }
     });
     flush();
-
     logger.debug('[SSH] ' + ap.name + ' ' + iface + ' hostapd_cli all_sta: ' + statsMap.size + ' station(s)');
   } catch (err) {
     logger.warn('[SSH] ' + ap.name + ' hostapd_cli all_sta on ' + iface + ' failed: ' + err.message);
@@ -301,6 +295,36 @@ async function fetchClientlistJson(ap) {
 }
 
 /**
+ * Fetch ip neigh show from the master node and return a plain object
+ * mapping lowercase MAC -> IP for REACHABLE entries only.
+ *
+ * This must be called on the master because the master has authoritative
+ * REACHABLE entries for all mesh node management IPs. Satellite nodes only
+ * see their own local subnet and may resolve the wrong IP for other nodes.
+ */
+async function fetchNeighMap(ap) {
+  try {
+    var neighOut = await runSSH(ap, 'ip neigh show 2>/dev/null || echo ""');
+    var neighMacToIp = {};
+    neighOut.split('\n').forEach(function (line) {
+      var parts = line.trim().split(new RegExp('\\s+'));
+      var macIdx = parts.indexOf('lladdr') + 1;
+      if (macIdx > 0 && macIdx < parts.length) {
+        var state = parts[parts.length - 1].toUpperCase();
+        if (state === 'REACHABLE') {
+          neighMacToIp[parts[macIdx].toLowerCase()] = parts[0];
+        }
+      }
+    });
+    logger.info('[SSH] ' + ap.name + ' REACHABLE neigh entries: ' + Object.keys(neighMacToIp).length);
+    return neighMacToIp;
+  } catch (err) {
+    logger.warn('[SSH] ' + ap.name + ' ip neigh show unavailable: ' + err.message);
+    return {};
+  }
+}
+
+/**
  * Read /tmp/aplist.json and /tmp/relist.json from the master node and
  * return a Map<lowercase-mac, nodeId> covering every MAC that belongs to
  * a mesh node (satellites and master alike).
@@ -325,7 +349,6 @@ async function fetchClientlistJson(ap) {
 async function fetchMeshNodeMacs(ap) {
   // nodeId (string) -> Set of lowercase MACs
   var nodeGroups = new Map();
-
   function ensureGroup(nodeId) {
     if (!nodeGroups.has(nodeId)) nodeGroups.set(nodeId, new Set());
   }
@@ -373,7 +396,6 @@ async function fetchMeshNodeMacs(ap) {
   } catch (err) {
     logger.warn('[SSH] ' + ap.name + ' relist.json unavailable: ' + err.message);
   }
-
   // Step 2: join aplist.json BSSIDs into the correct node groups
   try {
     var apRaw = await runSSH(ap, 'cat /tmp/aplist.json 2>/dev/null');
@@ -415,7 +437,6 @@ async function fetchMeshNodeMacs(ap) {
   } catch (err) {
     logger.warn('[SSH] ' + ap.name + ' aplist.json unavailable: ' + err.message);
   }
-
   // Flatten into the final meshMap
   var meshMap = new Map();
   nodeGroups.forEach(function (macs, nodeId) {
@@ -436,17 +457,21 @@ async function fetchMeshNodeMacs(ap) {
  * @param {object}      ap            AP config entry
  * @param {object|null} clientlistMap flat MAC->{ip,rssi} from master (or null)
  * @param {Map|null}    meshMap       Map<mac,nodeId> from fetchMeshNodeMacs (or null)
+ * @param {object}      neighMacToIp  MAC->IP from fetchNeighMap on master (or {})
+ *                                    Used for mesh node IP resolution. Must come from
+ *                                    the master -- satellites have incomplete neigh tables.
  * @returns {Array} client objects
  */
-async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
+async function fetchClientsFromAP(ap, clientlistMap, meshMap, neighMacToIp) {
   var clients = [];
+  var neigh = neighMacToIp || {};
   logger.info('[SSH] Polling AP: ' + ap.name + ' (' + ap.host + ':' + (ap.ssh_port || 22) + ')');
 
   try {
     var driver = await detectDriver(ap);
 
-    // /proc/net/arp: used for regular client IP resolution.
-    // Stale entries are acceptable for clients (e.g. sleeping devices).
+    // /proc/net/arp: used for regular client IP resolution only.
+    // Stale entries are acceptable for sleeping devices.
     var arpOut = await runSSH(ap, 'cat /proc/net/arp 2>/dev/null || echo ""');
     var arpMacToIp = {};
     arpOut.split('\n').forEach(function (line) {
@@ -456,28 +481,6 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
       }
     });
     logger.debug('[SSH] ' + ap.name + ' ARP entries: ' + Object.keys(arpMacToIp).length);
-
-    // ip neigh show, REACHABLE only: used for mesh node IP resolution.
-    // /proc/net/arp can accumulate many stale entries for the same MAC
-    // (multiple old IPs), causing the wrong IP to be shown for a node.
-    // Filtering to REACHABLE guarantees the entry is currently confirmed.
-    // Two lookups are attempted per mesh node: first by the sta/backhaul MAC
-    // seen in the assoclist, then by the nodeId (primary MAC) as fallback,
-    // because ip neigh tracks the primary MAC while the assoclist reports
-    // the locally-generated sta MAC variant.
-    var neighOut = await runSSH(ap, 'ip neigh show 2>/dev/null || echo ""');
-    var neighMacToIp = {};
-    neighOut.split('\n').forEach(function (line) {
-      var parts = line.trim().split(new RegExp('\\s+'));
-      var macIdx = parts.indexOf('lladdr') + 1;
-      if (macIdx > 0 && macIdx < parts.length) {
-        var state = parts[parts.length - 1].toUpperCase();
-        if (state === 'REACHABLE') {
-          neighMacToIp[parts[macIdx].toLowerCase()] = parts[0];
-        }
-      }
-    });
-    logger.debug('[SSH] ' + ap.name + ' REACHABLE neigh entries: ' + Object.keys(neighMacToIp).length);
 
     var seenMacs = new Set();
 
@@ -491,7 +494,6 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
 
           // One SSH call fetches stats for all stations on this interface
           var statsMap = await getAllStaStatsAtheros(ap, athIface);
-
           for (var si = 0; si < stations.length; si++) {
             var staMac = stations[si].mac;
             var staRssi = stations[si].rssi;
@@ -500,7 +502,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             var meshNodeId = meshMap ? (meshMap.get(staMac) || null) : null;
             var clEntry = clientlistMap ? clientlistMap[staMac] : null;
             var ip = (clEntry && clEntry.ip) ? clEntry.ip
-              : (meshNodeId !== null ? (neighMacToIp[staMac] || neighMacToIp[meshNodeId] || null) : (arpMacToIp[staMac] || null));
+              : (meshNodeId !== null ? (neigh[staMac] || neigh[meshNodeId] || null) : (arpMacToIp[staMac] || null));
             var rssi = (clEntry && clEntry.rssi !== null) ? clEntry.rssi : staRssi;
             var stats = statsMap.get(staMac) || { tx_bytes: null, rx_bytes: null };
             clients.push({
@@ -528,7 +530,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             var meshId = meshMap ? (meshMap.get(mac) || null) : null;
             var clE = clientlistMap ? clientlistMap[mac] : null;
             var macIp = (clE && clE.ip) ? clE.ip
-              : (meshId !== null ? (neighMacToIp[mac] || neighMacToIp[meshId] || null) : (arpMacToIp[mac] || null));
+              : (meshId !== null ? (neigh[mac] || neigh[meshId] || null) : (arpMacToIp[mac] || null));
             var macRssi = (clE && clE.rssi !== null) ? clE.rssi : null;
             if (macRssi === null) {
               macRssi = await getRssiBroadcom(ap, bcIface, mac);
@@ -587,4 +589,4 @@ async function disconnectClient(ap, mac) {
   return kicked;
 }
 
-module.exports = { fetchClientsFromAP, fetchClientlistJson, fetchMeshNodeMacs, disconnectClient };
+module.exports = { fetchClientsFromAP, fetchClientlistJson, fetchMeshNodeMacs, fetchNeighMap, disconnectClient };
