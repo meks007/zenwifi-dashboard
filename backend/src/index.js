@@ -58,7 +58,6 @@ function broadcast(data) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
-
 function broadcastState() {
   // Exclude discovered clients that are definitively offline.
   // Clients not yet checked (isOnline == null) are included so they appear
@@ -102,8 +101,7 @@ function filterIp(ip) {
 function collapseMeshNodes(rawClients) {
   const regular = [];
   const nodeMap = new Map();
-
-  rawClients.forEach(function(c) {
+rawClients.forEach(function(c) {
     if (!c.isMeshNode) {
       regular.push(c);
       return;
@@ -166,8 +164,7 @@ async function poll() {
   let meshMap = new Map();
   let nodeGroups = new Map();
   let neighMap = {};
-
-  if (masterAp) {
+if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
@@ -199,7 +196,6 @@ async function poll() {
     } catch (err) {
       apFailCount[ap.name] = (apFailCount[ap.name] || 0) + 1;
       const failCount = apFailCount[ap.name];
-
       logger.error('[Poll] AP ' + ap.name + ' failed (attempt ' + failCount + '/' + FAILURE_THRESHOLD + '): ' + err.message);
 
       apStatus[ap.name] = {
@@ -208,8 +204,7 @@ async function poll() {
         lastSeen: apStatus[ap.name] ? apStatus[ap.name].lastSeen : null,
         error: err.message,
       };
-
-      if (failCount < FAILURE_THRESHOLD) {
+if (failCount < FAILURE_THRESHOLD) {
         // Carry over the clients from the previous successful poll for this AP
         currentClients.forEach(function(c) {
           if (c.apName === ap.name) allRawClients.push(c);
@@ -252,7 +247,20 @@ async function poll() {
   var allClients = dhcpEnriched;
   var ndCfg = config.opnsense && config.opnsense.neighbor_discovery;
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
-    var wifiMacs       = dhcpEnriched.map(function(c) { return c.mac; });
+    // Build the exclusion set for getWiredClients. It must contain every MAC
+    // that is already represented by a Wi-Fi or mesh row so that alternate
+    // MACs used by mesh nodes (STA/backhaul MACs stored in meshActiveMacs,
+    // which differ from the collapsed nodeId MAC) do not leak through as
+    // spurious "Discovered" rows.
+    var wifiMacs = [];
+    dhcpEnriched.forEach(function(c) {
+      wifiMacs.push(c.mac);
+      // Also exclude every backhaul/STA MAC that belongs to this mesh node.
+      if (c.isMeshNode && Array.isArray(c.meshActiveMacs)) {
+        c.meshActiveMacs.forEach(function(m) { wifiMacs.push(m); });
+      }
+    });
+
     var discovered     = opnsense.getWiredClients(wifiMacs);
     var discoveredRows = discovered.map(function(c) {
       var ifaceLabel = resolveIfaceLabel(c.interface, ndCfg);
@@ -329,7 +337,6 @@ async function handleDisconnect(mac) {
     return { success: false, error: err.message };
   }
 }
-
 // REST: POST /api/disconnect { mac }
 app.post('/api/disconnect', async function(req, res) {
   const mac = (req.body.mac || '').toLowerCase().trim();
@@ -374,7 +381,6 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   broadcastState();
 });
-
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
   logger.info('[Server] Listening on port ' + PORT);
