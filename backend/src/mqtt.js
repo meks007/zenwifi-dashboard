@@ -14,8 +14,13 @@ function connect(cfg, disconnectCallback) {
   appConfig = cfg;
   onDisconnectRequest = disconnectCallback;
 
-  const prefix = (cfg.mqtt && cfg.mqtt.topic_prefix) || 'zenwifi';
-  const url = 'mqtt://' + cfg.mqtt.host + ':' + cfg.mqtt.port;
+  if (!cfg.mqtt || !cfg.mqtt.host) {
+    console.log('[MQTT] No broker configured, skipping.');
+    return;
+  }
+
+  const prefix = getPrefix();
+  const url = 'mqtt://' + cfg.mqtt.host + ':' + (cfg.mqtt.port || 1883);
 
   mqttClient = mqtt.connect(url, {
     username: cfg.mqtt.username,
@@ -23,20 +28,17 @@ function connect(cfg, disconnectCallback) {
     clientId: 'zenwifi-dashboard-' + Date.now(),
     clean: true,
     reconnectPeriod: 5000,
-    // LWT: broker publishes this if the backend disconnects unexpectedly
     will: {
-      topic: prefix + '/bridge/state',
+      topic: prefix + '/bridge/status',
       payload: 'offline',
-      retain: true,
       qos: 1,
+      retain: true,
     },
   });
 
   mqttClient.on('connect', function () {
     console.log('[MQTT] Connected to ' + url);
-    // Announce that the backend is running
-    publish(prefix + '/bridge/state', 'online', true);
-
+    publish(prefix + '/bridge/status', 'online', true);
     const topic = prefix + '/clients/+/disconnect';
     mqttClient.subscribe(topic, { qos: 1 }, function (err) {
       if (err) console.error('[MQTT] Subscribe error:', err.message);
@@ -62,18 +64,10 @@ function publish(topic, payload, retain) {
   if (retain === undefined) retain = true;
   if (!mqttClient || !mqttClient.connected) return;
   const msg = typeof payload === 'object' ? JSON.stringify(payload) : String(payload);
-  mqttClient.publish(topic, msg, { retain: retain, qos: 1 });
+  mqttClient.publish(topic, msg, { retain: !!retain, qos: 1 });
 }
 
-/**
- * Publish per-client state, info, and last_seen topics.
- *
- *   <prefix>/clients/<mac>/state      online | offline
- *   <prefix>/clients/<mac>/last_seen  ISO timestamp (retained)
- *   <prefix>/clients/<mac>/ap         AP name (retained)
- *   <prefix>/clients/<mac>/info       JSON object (retained)
- */
-function publishClientStates(prevClients, currentClients) {
+function publishClientStates(prevClients, currentClients, apStatus) {
   const prefix = getPrefix();
   const now = new Date().toISOString();
 
@@ -84,67 +78,52 @@ function publishClientStates(prevClients, currentClients) {
     publish(prefix + '/clients/' + mac + '/info', {
       hostname: c.hostname || null,
       ip: c.ip || null,
-      rssi: c.rssi !== undefined ? c.rssi : null,
+      rssi: c.rssi != null ? c.rssi : null,
       iface: c.iface || null,
-      tx_bytes: c.tx_bytes !== undefined ? c.tx_bytes : null,
-      rx_bytes: c.rx_bytes !== undefined ? c.rx_bytes : null,
-      tx_rate: c.tx_rate !== undefined ? c.tx_rate : null,
-      rx_rate: c.rx_rate !== undefined ? c.rx_rate : null,
+      tx_bytes: c.tx_bytes != null ? c.tx_bytes : null,
+      rx_bytes: c.rx_bytes != null ? c.rx_bytes : null,
+      tx_errors: c.tx_errors != null ? c.tx_errors : null,
+      rx_errors: c.rx_errors != null ? c.rx_errors : null,
     });
   });
 
-  prevClients.forEach(function (c, mac) {
+  prevClients.forEach(function (_, mac) {
     if (!currentClients.has(mac)) {
       publish(prefix + '/clients/' + mac + '/state', 'offline');
-      // Retain the last_seen from when we last saw this client
-      if (c.lastSeen) {
-        publish(prefix + '/clients/' + mac + '/last_seen', c.lastSeen);
-      }
     }
   });
-}
 
-/**
- * Publish per-AP status topics.
- *
- *   <prefix>/aps/<safeName>/state    online | offline
- *   <prefix>/aps/<safeName>/status   { online, clientCount, lastSeen, error }
- */
-function publishApStatus(apStatus) {
-  const prefix = getPrefix();
-  Object.keys(apStatus).forEach(function (apName) {
-    const s = apStatus[apName];
-    const safeName = apName.replace(new RegExp('[^a-zA-Z0-9_-]', 'g'), '_');
-    publish(prefix + '/aps/' + safeName + '/state', s.online ? 'online' : 'offline');
-    publish(prefix + '/aps/' + safeName + '/status', {
-      online: !!s.online,
-      clientCount: s.clientCount || 0,
-      lastSeen: s.lastSeen || null,
-      error: s.error || null,
+  if (apStatus) {
+    Object.keys(apStatus).forEach(function (apName) {
+      const ap = apStatus[apName];
+      var apClients = 0;
+      currentClients.forEach(function (c) {
+        if (c.apName === apName && !c.isMeshNode) apClients++;
+      });
+      publish(prefix + '/ap/' + apName + '/status', {
+        online: !!ap.online,
+        clients: apClients,
+        last_seen: ap.lastSeen || null,
+        error: ap.error || null,
+      });
     });
-  });
-}
+  }
 
-/**
- * Publish global summary stats.
- *
- *   <prefix>/stats   { totalClients, meshNodes, timestamp }
- */
-function publishStats(currentClients) {
-  const prefix = getPrefix();
-  let total = 0;
-  let mesh = 0;
+  var meshCount = 0;
+  var regularCount = 0;
   currentClients.forEach(function (c) {
-    if (c.isMeshNode) mesh++;
-    else total++;
+    if (c.isMeshNode) meshCount++;
+    else regularCount++;
   });
+
   publish(prefix + '/stats', {
-    totalClients: total,
-    meshNodes: mesh,
-    timestamp: new Date().toISOString(),
+    total_clients: regularCount + meshCount,
+    mesh_nodes: meshCount,
+    regular_clients: regularCount,
+    timestamp: now,
   });
 }
 
 function isConnected() { return !!(mqttClient && mqttClient.connected); }
 
-module.exports = { connect, publishClientStates, publishApStatus, publishStats, isConnected, publish };
+module.exports = { connect, publishClientStates, isConnected, publish };
