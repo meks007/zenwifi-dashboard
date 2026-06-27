@@ -70,7 +70,6 @@ function collapseMeshNodes(rawClients) {
       regular.push(c);
       return;
     }
-
     const nodeId = c.meshNodeId;
     if (!nodeMap.has(nodeId)) {
       nodeMap.set(nodeId, {
@@ -127,7 +126,6 @@ async function poll() {
   await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap, nodeGroups);
-
       // Success: reset failure counter, accept results
       apFailCount[ap.name] = 0;
       clients.forEach(function(c) { allRawClients.push(c); });
@@ -170,8 +168,8 @@ async function poll() {
       vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac),
     });
   });
-
   const collapsed = collapseMeshNodes(enriched);
+
   // Enrich each client with OPNsense DHCP lease and reservation data.
   // For non-mesh clients, promote dhcp.hostname and dhcp.ip to the top-level
   // fields so the frontend can display them without reading into dhcp.*.
@@ -179,20 +177,51 @@ async function poll() {
   const dhcpEnriched = collapsed.map(function(c) {
     var dhcp = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
     return Object.assign({}, c, {
+      connectionType: c.isMeshNode ? 'mesh' : 'wifi',
       dhcp:     dhcp,
       ip:       (!c.isMeshNode && dhcp && dhcp.ip)       ? dhcp.ip       : (c.ip       || null),
       hostname: (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
     });
   });
 
-  const freshClients = new Map();
-  dhcpEnriched.forEach(function(c) { freshClients.set(c.mac, c); });
+  // Merge wired clients from OPNsense neighbor discovery when the feature is enabled.
+  // Only hosts not already visible as a ZenWifi Wi-Fi client are included.
+  var allClients = dhcpEnriched;
+  if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
+    var wifiMacs = dhcpEnriched.map(function(c) { return c.mac; });
+    var wired    = opnsense.getWiredClients(wifiMacs);
+    var wiredRows = wired.map(function(c) {
+      return {
+        mac:            c.mac,
+        ip:             c.ip,
+        hostname:       c.hostname,
+        vendor:         ouiModule.lookup(c.mac),
+        dhcp:           c.hasReservation ? { hasReservation: true, description: c.description } : null,
+        apName:         'OPNsense (' + c.interface + ')',
+        apHost:         config.opnsense ? config.opnsense.host : null,
+        iface:          c.interface,
+        rssi:           null,
+        tx_bytes:       null,
+        rx_bytes:       null,
+        isMeshNode:     false,
+        connectionType: 'wired',
+        lastSeen:       c.lastSeen,
+      };
+    });
+    if (wiredRows.length > 0) {
+      logger.debug('[Poll] Merging ' + wiredRows.length + ' wired client(s) from neighbor discovery');
+    }
+    allClients = dhcpEnriched.concat(wiredRows);
+  }
 
+  const freshClients = new Map();
+  allClients.forEach(function(c) { freshClients.set(c.mac, c); });
   prevClients = currentClients;
   currentClients = freshClients;
   mqttModule.publishClientStates(prevClients, currentClients, apStatus);
   broadcastState();
 }
+
 async function handleDisconnect(mac) {
   const c = currentClients.get(mac);
   if (!c) {
@@ -202,6 +231,10 @@ async function handleDisconnect(mac) {
   if (c.isMeshNode) {
     logger.warn('[Disconnect] Refusing to disconnect mesh node ' + mac);
     return { success: false, error: 'Disconnecting mesh nodes is not allowed' };
+  }
+  if (c.connectionType === 'wired') {
+    logger.warn('[Disconnect] Refusing to disconnect wired client ' + mac);
+    return { success: false, error: 'Disconnecting wired clients is not supported' };
   }
   const ap = aps.find(function(a) { return a.name === c.apName; });
   if (!ap) return { success: false, error: 'AP not found' };
@@ -246,6 +279,7 @@ wss.on('connection', function(ws) {
   }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
+
 const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 
