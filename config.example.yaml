@@ -20,13 +20,24 @@ log_buffer_size: 500
 debug_logging: false
 
 access_points:
+  # Mark exactly one AP as master: true. The master node maintains
+  # /tmp/clientlist.json which is the primary source for client IPs and
+  # RSSI values across all nodes. On ASUS AiMesh, this is the main router.
   - name: "Living Room"
     host: 192.168.1.1
     ssh_port: 22
     username: admin
     password: secret
+    master: true
+
   - name: "Office"
     host: 192.168.1.2
+    ssh_port: 22
+    username: admin
+    password: secret
+
+  - name: "Bedroom"
+    host: 192.168.1.3
     ssh_port: 22
     username: admin
     password: secret
