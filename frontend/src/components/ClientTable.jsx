@@ -29,6 +29,20 @@ function fmtBytes(val) {
   return n + ' B';
 }
 
+/**
+ * Convert an IPv4 string to a 32-bit integer for numeric comparison.
+ * Returns null for anything that is not a valid dotted-quad address so
+ * those rows sort to the end regardless of direction.
+ */
+function ipToInt(ip) {
+  if (!ip) return null;
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+  const octets = parts.map(Number);
+  if (octets.some(function(o) { return isNaN(o) || o < 0 || o > 255; })) return null;
+  return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+}
+
 function VendorCell({ client }) {
   if (client.isMeshNode) {
     return (
@@ -59,11 +73,21 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   });
 
   const sorted = filtered.slice().sort(function(a, b) {
-    const av = a[sortKey] != null ? a[sortKey] : '';
-    const bv = b[sortKey] != null ? b[sortKey] : '';
-    if (av < bv) return sortDir === 'asc' ? -1 : 1;
-    if (av > bv) return sortDir === 'asc' ? 1 : -1;
-    return 0;
+    var cmp = 0;
+    if (sortKey === 'ip') {
+      // Numeric octet-by-octet comparison; null IPs always sort last.
+      const ai = ipToInt(a.ip);
+      const bi = ipToInt(b.ip);
+      if (ai === null && bi === null) cmp = 0;
+      else if (ai === null) cmp = 1;
+      else if (bi === null) cmp = -1;
+      else cmp = ai < bi ? -1 : ai > bi ? 1 : 0;
+    } else {
+      const av = a[sortKey] != null ? a[sortKey] : '';
+      const bv = b[sortKey] != null ? b[sortKey] : '';
+      cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    }
+    return sortDir === 'asc' ? cmp : -cmp;
   });
 
   function toggleSort(key) {
