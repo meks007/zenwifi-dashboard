@@ -24,6 +24,9 @@ const config = configModule.loadConfig();
 logger.setDebug(!!config.debug_logging);
 logger.setMaxLines(config.log_buffer_size || 500);
 
+const aps = config.access_points || [];
+const masterAp = aps.find(function(ap) { return ap.master === true; }) || null;
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
@@ -46,12 +49,23 @@ function broadcastState() {
 }
 
 async function poll() {
-  const aps = config.access_points || [];
   const freshClients = new Map();
+
+  // Fetch clientlist.json from the master node once per poll cycle.
+  // All AP polls share this map as their primary IP/RSSI source.
+  let clientlistMap = null;
+  if (masterAp) {
+    clientlistMap = await sshModule.fetchClientlistJson(masterAp);
+    if (!clientlistMap) {
+      logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
+    }
+  } else {
+    logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
+  }
 
   await Promise.allSettled(aps.map(async function(ap) {
     try {
-      const clients = await sshModule.fetchClientsFromAP(ap);
+      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap);
       clients.forEach(function(c) {
         freshClients.set(c.mac, Object.assign({}, c, { vendor: ouiModule.lookup(c.mac) }));
       });
@@ -78,7 +92,7 @@ async function handleDisconnect(mac) {
     logger.warn('[Disconnect] MAC ' + mac + ' not found in client list');
     return { success: false, error: 'Client not found' };
   }
-  const ap = (config.access_points || []).find(function(a) { return a.name === c.apName; });
+  const ap = aps.find(function(a) { return a.name === c.apName; });
   if (!ap) return { success: false, error: 'AP not found' };
   try {
     await sshModule.disconnectClient(ap, mac);
@@ -151,7 +165,8 @@ mqttModule.connect(config, async function(mac) {
 const intervalMs = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Starting. Polling every ' + (config.polling_interval_seconds || 30) + 's');
 logger.info('[Server] Log buffer size: ' + (config.log_buffer_size || 500) + ' lines');
-logger.info('[Server] APs: ' + (config.access_points || []).map(function(a) { return a.name; }).join(', '));
+logger.info('[Server] APs: ' + aps.map(function(a) { return a.name + (a.master ? ' (master)' : ''); }).join(', '));
+logger.info('[Server] Master AP: ' + (masterAp ? masterAp.name : 'none configured'));
 logger.info('[Server] Debug logging: ' + (config.debug_logging ? 'ON' : 'OFF'));
 poll();
 setInterval(poll, intervalMs);
