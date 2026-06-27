@@ -65,9 +65,9 @@ function compareByKey(a, b, key) {
 /**
  * Vendor column cell.
  * Mesh nodes show the Mesh Node badge only.
- * All other clients (Wi-Fi and wired) show OUI chip + vendor name.
- * Wired clients carry no extra badge here; the Access Point column
- * already labels them as "Wired <Interface>".
+ * All other clients (Wi-Fi and discovered) show OUI chip + vendor name.
+ * Discovered clients carry no extra badge here; the Access Point column
+ * already labels them as "Discovered <Interface>".
  */
 function VendorCell({ client, activeVendors, activeOuis, onVendorClick, onOuiClick }) {
   if (client.isMeshNode) {
@@ -150,7 +150,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         (c.ip && c.ip.toLowerCase().includes(q)) ||
         (c.apName && c.apName.toLowerCase().includes(q)) ||
         (c.isMeshNode && 'mesh node'.includes(q)) ||
-        (c.connectionType === 'wired' && 'wired'.includes(q))
+        (c.connectionType === 'discovered' && 'discovered'.includes(q))
       );
       if (!textMatch) return false;
     }
@@ -303,16 +303,16 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               const isKicking = !!disconnecting[c.mac];
               const txFmt = fmtBytes(c.tx_bytes);
               const rxFmt = fmtBytes(c.rx_bytes);
-              const isWired = c.connectionType === 'wired';
-              const isMesh  = c.isMeshNode;
+              const isDiscovered = c.connectionType === 'discovered';
+              const isMesh       = c.isMeshNode;
               return (
                 <tr
                   key={c.mac}
                   className={
                     'border-b border-gray-800 last:border-0 transition-colors ' +
-                    (isMesh  ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
-                     isWired ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
-                               'hover:bg-gray-800/50')
+                    (isMesh       ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
+                     isDiscovered ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
+                                    'hover:bg-gray-800/50')
                   }
                 >
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
@@ -336,7 +336,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     >
                       <span className={
                         'w-1.5 h-1.5 rounded-full inline-block ' +
-                        (isMesh ? 'bg-indigo-400' : isWired ? 'bg-amber-400' : 'bg-green-400')
+                        (isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400')
                       }></span>
                       {c.apName}
                     </button>
@@ -354,8 +354,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                   <td className="px-4 py-3 text-right">
                     {isMesh ? (
                       <span className="text-xs text-gray-600 px-3 py-1.5">Infrastructure</span>
-                    ) : isWired ? (
-                      <span className="text-xs text-gray-600 px-3 py-1.5">Wired</span>
+                    ) : isDiscovered ? (
+                      <span className="text-xs text-gray-600 px-3 py-1.5">Discovered</span>
                     ) : (
                       <button
                         onClick={function() { onDisconnect(c.mac); }}
