@@ -16,7 +16,7 @@ const ROWS_PER_PAGE = 500;
 
 function fetchPage(cfg, apiPath, page, rowCount) {
   return new Promise(function (resolve, reject) {
-    var auth    = Buffer.from(cfg.apiKey + ':' + cfg.apiSecret).toString('base64');
+    var auth    = Buffer.from(cfg.api_key + ':' + cfg.api_secret).toString('base64');
     var qs      = '?rowCount=' + rowCount + '&current=' + page;
     var options = {
       hostname:           cfg.host,
@@ -27,7 +27,7 @@ function fetchPage(cfg, apiPath, page, rowCount) {
         Authorization: 'Basic ' + auth,
         Accept:        'application/json',
       },
-      rejectUnauthorized: cfg.verifySsl === true,
+      rejectUnauthorized: cfg.verify_ssl === true,
     };
 
     var req = https.request(options, function (res) {
@@ -73,12 +73,12 @@ async function fetchAllRows(cfg, apiPath) {
 // ---------------------------------------------------------------------------
 // SSH helper for OPNsense
 //
-// Config keys (harmonized with access_points convention):
-//   ssh_host  - OPNsense IP/hostname (defaults to cfg.host)
-//   ssh_port  - SSH port (default: 22)
-//   username  - SSH user (default: root)
-//   password  - SSH password
-//   key_path  - path to private key file (alternative to password)
+// Config keys (all snake_case, consistent with access_points):
+//   ssh_host   - OPNsense IP/hostname for SSH (defaults to cfg.host)
+//   ssh_port   - SSH port (default: 22)
+//   username   - SSH user (default: root)
+//   password   - SSH password
+//   key_path   - path to private key file (alternative to password)
 //
 // OPNsense sets root's login shell to opnsense-shell, an interactive
 // numbered menu. We open a PTY-backed shell channel, wait for the menu
@@ -163,11 +163,11 @@ function runOPNsenseSSH(cfg, command) {
     });
 
     conn.connect({
-      host:          cfg.ssh_host  || cfg.host,
-      port:          cfg.ssh_port  || 22,
-      username:      cfg.username  || 'root',
-      password:      cfg.password  || undefined,
-      privateKey:    cfg.key_path  ? require('fs').readFileSync(cfg.key_path) : undefined,
+      host:          cfg.ssh_host || cfg.host,
+      port:          cfg.ssh_port || 22,
+      username:      cfg.username || 'root',
+      password:      cfg.password || undefined,
+      privateKey:    cfg.key_path ? require('fs').readFileSync(cfg.key_path) : undefined,
       readyTimeout:  10000,
       hostVerifier:  function () { return true; },
     });
@@ -297,8 +297,8 @@ function getDhcpInfo(mac) {
 }
 
 function startPolling(cfg) {
-  if (!cfg || !cfg.host || !cfg.apiKey || !cfg.apiSecret) {
-    logger.warn('[OPNsense] Not configured - DHCP enrichment disabled. Set opnsense.host/apiKey/apiSecret in config.yaml.');
+  if (!cfg || !cfg.host || !cfg.api_key || !cfg.api_secret) {
+    logger.warn('[OPNsense] Not configured - DHCP enrichment disabled. Set opnsense.host/api_key/api_secret in config.yaml.');
     return;
   }
   logger.info('[OPNsense] Starting DHCP polling against ' + cfg.host + ' every ' + (cfg.poll_interval || 60) + 's');
