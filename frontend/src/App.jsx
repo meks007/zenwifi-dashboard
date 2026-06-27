@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ClientTable from './components/ClientTable.jsx';
 import StatusBar from './components/StatusBar.jsx';
+import LogView from './components/LogView.jsx';
 
 const WS_URL = 'ws://' + window.location.host + '/ws';
 const RECONNECT_DELAY_MS = 3000;
+const MAX_LOG_ENTRIES = 500;
 
 export default function App() {
   const [clients, setClients] = useState([]);
@@ -13,12 +15,21 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [disconnecting, setDisconnecting] = useState({});
   const [toast, setToast] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [activeTab, setActiveTab] = useState('clients');
   const wsRef = useRef(null);
 
   const showToast = useCallback(function(msg, type) {
     setToast({ msg, type });
     setTimeout(function() { setToast(null); }, 3500);
   }, []);
+
+  function appendLog(entry) {
+    setLogs(function(prev) {
+      const next = prev.concat(entry);
+      return next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next;
+    });
+  }
 
   const connectWS = useCallback(function() {
     const ws = new WebSocket(WS_URL);
@@ -29,18 +40,32 @@ export default function App() {
     ws.onmessage = function(event) {
       try {
         const data = JSON.parse(event.data);
+
         if (data.type === 'clients') {
           setClients(data.clients || []);
           setApStatus(data.apStatus || {});
           setMqttConnected(!!data.mqttConnected);
           setLastUpdated(data.timestamp);
         }
+
+        if (data.type === 'log') {
+          appendLog(data.entry);
+        }
+
+        if (data.type === 'log_history') {
+          setLogs(data.logs || []);
+        }
+
         if (data.type === 'disconnect_result') {
-          setDisconnecting(function(d) { const n = Object.assign({}, d); delete n[data.mac]; return n; });
+          setDisconnecting(function(d) {
+            const n = Object.assign({}, d);
+            delete n[data.mac];
+            return n;
+          });
           if (data.success) {
             showToast('Client ' + data.mac + ' disconnected.', 'success');
           } else {
-            showToast('Failed: ' + data.error, 'error');
+            showToast('Failed to disconnect ' + data.mac + ': ' + data.error, 'error');
           }
         }
       } catch (_e) {}
@@ -65,6 +90,11 @@ export default function App() {
     wsRef.current.send(JSON.stringify({ type: 'disconnect', mac: mac }));
   }, []);
 
+  const tabs = [
+    { id: 'clients', label: 'Clients (' + clients.length + ')' },
+    { id: 'logs', label: 'Logs' + (logs.filter(function(l) { return l.level === 'error'; }).length > 0 ? ' (' + logs.filter(function(l) { return l.level === 'error'; }).length + ' errors)' : '') },
+  ];
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
       <header className="bg-gray-900 border-b border-gray-800 px-4 py-4 flex items-center justify-between">
@@ -72,10 +102,8 @@ export default function App() {
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">ZW</div>
           <h1 className="text-lg font-semibold tracking-tight">Zenwifi Dashboard</h1>
         </div>
-        <div className="flex items-center gap-2 text-sm text-gray-400">
-          {lastUpdated && (
-            <span>Updated {new Date(lastUpdated).toLocaleTimeString()}</span>
-          )}
+        <div className="text-sm text-gray-500">
+          {lastUpdated && 'Updated ' + new Date(lastUpdated).toLocaleTimeString()}
         </div>
       </header>
 
@@ -86,11 +114,37 @@ export default function App() {
           apStatus={apStatus}
           clientCount={clients.length}
         />
-        <ClientTable
-          clients={clients}
-          disconnecting={disconnecting}
-          onDisconnect={handleDisconnect}
-        />
+
+        <div className="flex gap-1 border-b border-gray-800">
+          {tabs.map(function(tab) {
+            return (
+              <button
+                key={tab.id}
+                onClick={function() { setActiveTab(tab.id); }}
+                className={
+                  'px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ' +
+                  (activeTab === tab.id
+                    ? 'border-blue-500 text-blue-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-300')
+                }
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeTab === 'clients' && (
+          <ClientTable
+            clients={clients}
+            disconnecting={disconnecting}
+            onDisconnect={handleDisconnect}
+          />
+        )}
+
+        {activeTab === 'logs' && (
+          <LogView logs={logs} />
+        )}
       </main>
 
       {toast && (
