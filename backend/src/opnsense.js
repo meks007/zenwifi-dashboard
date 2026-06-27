@@ -72,18 +72,6 @@ async function fetchAllRows(cfg, apiPath) {
 
 // ---------------------------------------------------------------------------
 // SSH helper for OPNsense
-//
-// Config keys (all snake_case, consistent with access_points):
-//   ssh_host   - OPNsense IP/hostname for SSH (defaults to cfg.host)
-//   ssh_port   - SSH port (default: 22)
-//   username   - SSH user (default: root)
-//   password   - SSH password
-//   key_path   - path to private key file (alternative to password)
-//
-// OPNsense sets root's login shell to opnsense-shell, an interactive
-// numbered menu. We open a PTY-backed shell channel, wait for the menu
-// prompt, send "8" to select the Shell option, wait for a real shell
-// prompt, then run the command and collect output until a sentinel marker.
 // ---------------------------------------------------------------------------
 
 function runOPNsenseSSH(cfg, command) {
@@ -112,23 +100,21 @@ function runOPNsenseSSH(cfg, command) {
           output += chunk;
 
           if (stage === 'menu') {
-            // OPNsense menu ends with e.g. "Enter an option: "
             if (/Enter an option/i.test(chunk) || /option.*:/i.test(chunk)) {
               stage = 'shell_wait';
               logger.debug('[OPNsense SSH] Menu detected, sending 8');
               stream.write('8\n');
             }
           } else if (stage === 'shell_wait') {
-            // Wait for a real shell prompt (#, $, or %)
             if (/[#$%]\s*$/.test(chunk.trim())) {
               stage  = 'cmd_wait';
-              output = ''; // discard menu noise
+              output = '';
               logger.debug('[OPNsense SSH] Shell ready, running command');
               stream.write(command + '; echo __OPNSENSE_DONE__\n');
             }
           } else if (stage === 'cmd_wait') {
             if (output.indexOf('__OPNSENSE_DONE__') !== -1) {
-              var result = output
+              var raw = output
                 .replace(/\r/g, '')
                 .split('__OPNSENSE_DONE__')[0]
                 .replace(/^[^\n]*\n/, '') // strip echoed command line
@@ -137,7 +123,7 @@ function runOPNsenseSSH(cfg, command) {
               stage = 'done';
               clearTimeout(timeout);
               conn.end();
-              resolve(result);
+              resolve(raw);
             }
           }
         });
@@ -178,13 +164,6 @@ function runOPNsenseSSH(cfg, command) {
 // Reservation sources
 // ---------------------------------------------------------------------------
 
-/**
- * Source 1 - Kea DHCPv4 API (OPNsense >= 24.1 with Kea backend).
- * Returns null in two cases to trigger the SSH fallback:
- *   - HTTP error or network failure (endpoint does not exist)
- *   - Zero rows returned (Kea not in use / no reservations configured in Kea)
- * Only returns a map when Kea is the active backend AND has actual entries.
- */
 async function fetchReservationsKea(cfg) {
   try {
     var rows = await fetchAllRows(cfg, '/api/kea/dhcpv4/searchReservation');
@@ -211,13 +190,31 @@ async function fetchReservationsKea(cfg) {
 }
 
 /**
- * Source 2 - Parse /conf/config.xml via SSH (option 8 shell).
- * Works for ISC DHCP and Dnsmasq static host mappings.
+ * Strip ANSI escape sequences and other terminal control codes that a PTY
+ * session may inject into the output stream.
  */
+function stripAnsi(str) {
+  // ESC [ ... m  (SGR), ESC [ ... H/A/B/C/D/J/K (cursor), and bare ESC sequences
+  return str
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1b[^[]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, ''); // control chars except \t \n
+}
+
 async function fetchReservationsConfigXml(cfg) {
   try {
     logger.info('[OPNsense SSH] Connecting to ' + (cfg.ssh_host || cfg.host) + ' to read config.xml');
-    var xmlChunk = await runOPNsenseSSH(cfg, 'cat /conf/config.xml');
+    var raw     = await runOPNsenseSSH(cfg, 'cat /conf/config.xml');
+    var cleaned = stripAnsi(raw);
+
+    // Debug: log a short window around the first <staticmap> occurrence
+    var probe = cleaned.indexOf('<staticmap>');
+    if (probe === -1) {
+      logger.warn('[OPNsense] No <staticmap> found in received config.xml (' + cleaned.length + ' chars)');
+      logger.debug('[OPNsense] config.xml head: ' + cleaned.slice(0, 300).replace(/\n/g, ' '));
+    } else {
+      logger.debug('[OPNsense] First <staticmap> at char ' + probe + ' of ' + cleaned.length);
+    }
 
     var map     = {};
     var blockRe = /<staticmap>([\s\S]*?)<\/staticmap>/g;
@@ -227,14 +224,14 @@ async function fetchReservationsConfigXml(cfg) {
     };
 
     var block;
-    while ((block = blockRe.exec(xmlChunk)) !== null) {
+    while ((block = blockRe.exec(cleaned)) !== null) {
       var inner = block[1];
       var mac   = (tagRe('mac', inner) || '').toLowerCase();
       if (!mac) continue;
       map[mac] = {
-        ip:          tagRe('ipaddr',   inner),
-        hostname:    tagRe('hostname', inner),
-        description: tagRe('descr',   inner),
+        ip:          tagRe('ipaddr',   inner) || null,
+        hostname:    tagRe('hostname', inner) || null,
+        description: tagRe('descr',   inner) || null,
       };
     }
 
@@ -252,7 +249,6 @@ async function fetchReservationsConfigXml(cfg) {
 
 async function refresh(cfg) {
   try {
-    // --- Dynamic leases (REST API, works for all backends) ---
     var leaseRows   = await fetchAllRows(cfg, '/api/dhcpv4/leases/searchLease');
     var newLeaseMap = {};
     leaseRows.forEach(function (row) {
@@ -262,12 +258,11 @@ async function refresh(cfg) {
         ip:       row.address  || null,
         hostname: row.hostname || null,
         ends:     row.ends     || null,
-        type:     row.type     || null, // 'dynamic' or 'static'
+        type:     row.type     || null,
       };
     });
     leaseMap = newLeaseMap;
 
-    // --- Reservations: Kea API first, fall back to config.xml via SSH ---
     var newReservationMap = await fetchReservationsKea(cfg);
     if (newReservationMap === null) {
       newReservationMap = await fetchReservationsConfigXml(cfg);
