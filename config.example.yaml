@@ -60,12 +60,11 @@ access_points:
 #   System -> Access -> Users -> <user> -> API keys
 #   Required privilege: DHCP: Leases (read-only is sufficient)
 #
-# SSH credentials:
+# SSH credentials (same field names as access_points for consistency):
 #   System -> Settings -> Administration -> Secure Shell -> enable SSH
-#   Must use root (or a user that can sudo to root) because opnsense-shell
-#   (the interactive console menu) is only accessible by UID 0.
-#   When logging in as root, OPNsense presents a numbered menu - the backend
-#   automatically sends "8" to select the Shell option before running commands.
+#   Must connect as root. OPNsense presents a numbered console menu on login;
+#   the backend automatically sends "8" to select the Shell option.
+#   ssh_host defaults to the value of 'host' above if omitted.
 #
 # Remove this block or leave host empty to disable DHCP enrichment entirely.
 # ---------------------------------------------------------------------------
@@ -78,12 +77,11 @@ opnsense:
   verifySsl: false          # Set to true if OPNsense has a valid/trusted TLS cert
 
   # --- SSH (static reservations via /conf/config.xml) ---
-  # sshHost defaults to the value of 'host' above if omitted
-  sshHost: 192.168.x.x
-  sshPort: 22
-  sshUser: root
-  sshPassword: your-root-password
-  # sshKeyPath: /run/secrets/opnsense_id_rsa   # path to private key (alternative to password)
+  ssh_host: 192.168.x.x    # defaults to 'host' above if omitted
+  ssh_port: 22
+  username: root
+  password: your-root-password
+  # key_path: /run/secrets/opnsense_id_rsa   # path to private key (alternative to password)
 
   # --- Polling ---
-  pollInterval: 60          # How often (seconds) to refresh DHCP data
+  poll_interval: 60         # How often (seconds) to refresh DHCP data
