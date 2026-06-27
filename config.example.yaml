@@ -10,6 +10,9 @@ mqtt:
 
 polling_interval_seconds: 10
 
+# Set to true to log every SSH command sent to each AP (useful for debugging)
+debug_logging: false
+
 access_points:
   - name: "Living Room"
     host: 192.168.1.1
