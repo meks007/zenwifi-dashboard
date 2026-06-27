@@ -110,7 +110,6 @@ async function fetchClientlistJson(ap) {
           const key = mac.toLowerCase();
           const ip = (info.ip && info.ip !== '') ? info.ip : null;
           const rssi = (info.rssi && info.rssi !== '') ? parseInt(info.rssi, 10) : null;
-          // Keep the first non-null IP/RSSI seen for this MAC
           if (!map[key]) {
             map[key] = { ip: ip, rssi: isNaN(rssi) ? null : rssi };
           } else {
@@ -131,17 +130,60 @@ async function fetchClientlistJson(ap) {
   }
 }
 
+// Read /tmp/aplist.json and /tmp/relist.json from the master node.
+// Returns a Set of lowercase MACs that belong to AiMesh infrastructure
+// (node radio BSSIDs and backhaul STA MACs).
+async function fetchMeshNodeMacs(ap) {
+  const meshMacs = new Set();
+
+  try {
+    const apRaw = await runSSH(ap, 'cat /tmp/aplist.json 2>/dev/null');
+    if (apRaw && apRaw.trim()) {
+      const apData = JSON.parse(apRaw);
+      // { "0": { "ap2g": "MAC", "ap5g": "MAC", ... }, ... }
+      Object.values(apData).forEach(function(node) {
+        Object.values(node).forEach(function(mac) {
+          if (mac && mac.includes(':')) meshMacs.add(mac.toLowerCase());
+        });
+      });
+    }
+  } catch (err) {
+    logger.warn('[SSH] ' + ap.name + ' aplist.json unavailable: ' + err.message);
+  }
+
+  try {
+    const reRaw = await runSSH(ap, 'cat /tmp/relist.json 2>/dev/null');
+    if (reRaw && reRaw.trim()) {
+      const reData = JSON.parse(reRaw);
+      // { "<node-MAC>": { "sta2g": "MAC", "sta5g": "MAC", ... }, ... }
+      Object.keys(reData).forEach(function(nodeMac) {
+        if (nodeMac && nodeMac.includes(':')) meshMacs.add(nodeMac.toLowerCase());
+        const stas = reData[nodeMac];
+        Object.values(stas).forEach(function(mac) {
+          if (mac && mac.includes(':')) meshMacs.add(mac.toLowerCase());
+        });
+      });
+    }
+  } catch (err) {
+    logger.warn('[SSH] ' + ap.name + ' relist.json unavailable: ' + err.message);
+  }
+
+  logger.info('[SSH] ' + ap.name + ' mesh node MACs identified: ' + meshMacs.size);
+  return meshMacs;
+}
+
 // fetchClientsFromAP accepts an optional clientlistMap (from the master node)
-// used as the primary source for IP and RSSI. Falls back to ARP for IP and
-// wl rssi for RSSI when the clientlist is non-conclusive.
-async function fetchClientsFromAP(ap, clientlistMap) {
+// used as the primary source for IP and RSSI, and an optional meshMacs Set
+// used to mark mesh infrastructure nodes.
+// Falls back to ARP for IP and wl rssi for RSSI when clientlist is non-conclusive.
+async function fetchClientsFromAP(ap, clientlistMap, meshMacs) {
   const clients = [];
   logger.info('[SSH] Polling AP: ' + ap.name + ' at ' + ap.host + ':' + (ap.ssh_port || 22));
 
   try {
     const ifaces = await getWirelessInterfaces(ap);
 
-    // Build ARP-based MAC->IP fallback map
+    // ARP table as IP fallback
     const arpOut = await runSSH(ap, 'cat /proc/net/arp 2>/dev/null || echo ""');
     const arpMacToIp = {};
     arpOut.split('\n').forEach(function(line) {
@@ -152,7 +194,6 @@ async function fetchClientsFromAP(ap, clientlistMap) {
     });
     logger.debug('[SSH] ' + ap.name + ' ARP entries: ' + Object.keys(arpMacToIp).length);
 
-    // Track MACs seen across interfaces to avoid duplicates
     const seenMacs = new Set();
 
     for (let i = 0; i < ifaces.length; i++) {
@@ -173,6 +214,8 @@ async function fetchClientsFromAP(ap, clientlistMap) {
             continue;
           }
           seenMacs.add(mac);
+
+          const isMeshNode = meshMacs ? meshMacs.has(mac) : false;
 
           // Resolve IP: clientlist first, ARP fallback
           const clEntry = clientlistMap ? clientlistMap[mac] : null;
@@ -199,6 +242,7 @@ async function fetchClientsFromAP(ap, clientlistMap) {
             iface: iface,
             apName: ap.name,
             apHost: ap.host,
+            isMeshNode: isMeshNode,
           });
         }
       } catch (ifaceErr) {
@@ -232,4 +276,4 @@ async function disconnectClient(ap, mac) {
   return kicked;
 }
 
-module.exports = { fetchClientsFromAP, fetchClientlistJson, disconnectClient };
+module.exports = { fetchClientsFromAP, fetchClientlistJson, fetchMeshNodeMacs, disconnectClient };
