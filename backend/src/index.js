@@ -229,7 +229,7 @@ wss.on('connection', function(ws) {
   // Send log history
   ws.send(JSON.stringify({
     type: 'log_history',
-    entries: logger.getHistory(),
+    entries: logger.list(),
   }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
