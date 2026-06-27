@@ -16,6 +16,10 @@
 //     - entries: array of { mac, ip } for all currently known discovered clients
 //     - call this every time the discovered client list changes
 //
+//   pinger.triggerCycle()
+//     - kick off a ping cycle immediately (non-blocking); safe to call at any time
+//     - does nothing if a cycle is already in progress
+//
 //   pinger.getStatus(mac)
 //     - returns { online: bool, checkedAt: Date|null } or null if unknown
 //
@@ -29,10 +33,11 @@ const logger    = require('./logger');
 // mac -> { ip, online: bool|null, checkedAt: Date|null }
 const statusMap = new Map();
 
-// mac -> { ip } for the current set of discovered clients
+// { mac, ip } for the current set of discovered clients
 let knownClients = [];
 
-let _onStateChange = null;
+let _onStateChange  = null;
+let _cycleRunning   = false;
 
 /**
  * Ping a single IP address with 3 packets, 1 s timeout per packet.
@@ -56,12 +61,21 @@ function pingOne(ip) {
  * to avoid flooding the network on large deployments).
  */
 async function runPingCycle() {
+  if (_cycleRunning) {
+    logger.debug('[Pinger] Cycle already in progress, skipping trigger');
+    return;
+  }
   if (knownClients.length === 0) return;
 
+  _cycleRunning = true;
   logger.debug('[Pinger] Starting ping cycle for ' + knownClients.length + ' client(s)');
 
-  for (var i = 0; i < knownClients.length; i++) {
-    var entry = knownClients[i];
+  // Snapshot the list at cycle start so mid-cycle setClients() calls don't
+  // affect the current run.
+  var snapshot = knownClients.slice();
+
+  for (var i = 0; i < snapshot.length; i++) {
+    var entry = snapshot[i];
     if (!entry.ip) continue; // no IP -> cannot ping
 
     var online = await pingOne(entry.ip);
@@ -84,6 +98,7 @@ async function runPingCycle() {
     }
   }
 
+  _cycleRunning = false;
   logger.debug('[Pinger] Ping cycle complete');
 }
 
@@ -98,6 +113,16 @@ function setClients(entries) {
   var currentMacs = new Set(knownClients.map(function(e) { return e.mac; }));
   statusMap.forEach(function(_, mac) {
     if (!currentMacs.has(mac)) statusMap.delete(mac);
+  });
+}
+
+/**
+ * Kick off a ping cycle immediately without waiting for the scheduled interval.
+ * Safe to call at any time; a guard prevents overlapping cycles.
+ */
+function triggerCycle() {
+  runPingCycle().catch(function(err) {
+    logger.error('[Pinger] Unexpected error in triggered cycle: ' + err.message);
   });
 }
 
@@ -117,9 +142,10 @@ function start(intervalMinutes, onStateChange) {
 
   logger.info('[Pinger] Starting; will ping discovered clients every ' + mins + ' minute(s)');
 
-  // Run immediately on startup, then on schedule
-  runPingCycle();
+  // The first scheduled cycle runs after the first interval elapses.
+  // Callers that want an immediate check after discovery should call
+  // triggerCycle() explicitly right after setClients().
   setInterval(runPingCycle, mins * 60 * 1000);
 }
 
-module.exports = { start, setClients, getStatus, isOnline };
+module.exports = { start, setClients, triggerCycle, getStatus, isOnline };
