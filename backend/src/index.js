@@ -15,12 +15,10 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server: server });
 
-// Wire logger broadcaster BEFORE config load so early log lines are captured
 logger.setBroadcaster(function(payload) { broadcast(payload); });
 
 const config = configModule.loadConfig();
 
-// Apply config-driven settings to logger
 logger.setDebug(!!config.debug_logging);
 logger.setMaxLines(config.log_buffer_size || 500);
 
@@ -51,23 +49,27 @@ function broadcastState() {
 async function poll() {
   const freshClients = new Map();
 
-  // Fetch clientlist.json from the master node once per poll cycle.
-  // All AP polls share this map as their primary IP/RSSI source.
+  // Fetch clientlist.json and mesh node MACs from master once per poll cycle
   let clientlistMap = null;
+  let meshMacs = new Set();
+
   if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     }
+    meshMacs = await sshModule.fetchMeshNodeMacs(masterAp);
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
 
   await Promise.allSettled(aps.map(async function(ap) {
     try {
-      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap);
+      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMacs);
       clients.forEach(function(c) {
-        freshClients.set(c.mac, Object.assign({}, c, { vendor: ouiModule.lookup(c.mac) }));
+        freshClients.set(c.mac, Object.assign({}, c, {
+          vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac),
+        }));
       });
       apStatus[ap.name] = { online: true, lastSeen: new Date().toISOString(), error: null };
     } catch (err) {
@@ -91,6 +93,10 @@ async function handleDisconnect(mac) {
   if (!c) {
     logger.warn('[Disconnect] MAC ' + mac + ' not found in client list');
     return { success: false, error: 'Client not found' };
+  }
+  if (c.isMeshNode) {
+    logger.warn('[Disconnect] Refusing to disconnect mesh node ' + mac);
+    return { success: false, error: 'Disconnecting mesh nodes is not allowed' };
   }
   const ap = aps.find(function(a) { return a.name === c.apName; });
   if (!ap) return { success: false, error: 'AP not found' };
@@ -156,7 +162,7 @@ wss.on('connection', function(ws) {
   ws.on('close', function() { logger.info('[WS] Browser client disconnected'); });
 });
 
-// MQTT
+// MQTT disconnect requests also go through handleDisconnect which guards mesh nodes
 mqttModule.connect(config, async function(mac) {
   await handleDisconnect(mac.toLowerCase());
 });
