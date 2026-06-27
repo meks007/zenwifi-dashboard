@@ -73,20 +73,25 @@ async function fetchAllRows(cfg, apiPath) {
 // ---------------------------------------------------------------------------
 // SSH helper for OPNsense
 //
-// OPNsense sets root's login shell to opnsense-shell, which presents an
-// interactive numbered menu even on non-PTY exec sessions (on some versions).
-// The reliable approach is to open a PTY-backed shell channel, wait for the
-// menu prompt, send "8" to select the Shell option, wait for the shell prompt,
-// then send the real command and collect its output.
+// Config keys (harmonized with access_points convention):
+//   ssh_host  - OPNsense IP/hostname (defaults to cfg.host)
+//   ssh_port  - SSH port (default: 22)
+//   username  - SSH user (default: root)
+//   password  - SSH password
+//   key_path  - path to private key file (alternative to password)
+//
+// OPNsense sets root's login shell to opnsense-shell, an interactive
+// numbered menu. We open a PTY-backed shell channel, wait for the menu
+// prompt, send "8" to select the Shell option, wait for a real shell
+// prompt, then run the command and collect output until a sentinel marker.
 // ---------------------------------------------------------------------------
 
 function runOPNsenseSSH(cfg, command) {
   return new Promise(function (resolve, reject) {
-    var conn   = new Client();
-    var output = '';
-    var stage  = 'menu'; // states: menu -> shell -> done
+    var conn    = new Client();
+    var output  = '';
+    var stage   = 'menu'; // states: menu -> shell_wait -> cmd_wait -> done
 
-    // Timer so we never hang forever
     var timeout = setTimeout(function () {
       conn.end();
       reject(new Error('OPNsense SSH timeout'));
@@ -107,8 +112,7 @@ function runOPNsenseSSH(cfg, command) {
           output += chunk;
 
           if (stage === 'menu') {
-            // Wait for the menu option prompt.
-            // OPNsense menu ends with something like "Enter an option: "
+            // OPNsense menu ends with e.g. "Enter an option: "
             if (/Enter an option/i.test(chunk) || /option.*:/i.test(chunk)) {
               stage = 'shell_wait';
               logger.debug('[OPNsense SSH] Menu detected, sending 8');
@@ -117,21 +121,17 @@ function runOPNsenseSSH(cfg, command) {
           } else if (stage === 'shell_wait') {
             // Wait for a real shell prompt (#, $, or %)
             if (/[#$%]\s*$/.test(chunk.trim())) {
-              stage = 'cmd_wait';
-              // Clear accumulated output (menu noise) and run our command.
-              // We append a unique sentinel so we know when output ends.
-              output = '';
+              stage  = 'cmd_wait';
+              output = ''; // discard menu noise
               logger.debug('[OPNsense SSH] Shell ready, running command');
               stream.write(command + '; echo __OPNSENSE_DONE__\n');
             }
           } else if (stage === 'cmd_wait') {
             if (output.indexOf('__OPNSENSE_DONE__') !== -1) {
-              // Strip the sentinel and everything after it, plus the command echo
               var result = output
                 .replace(/\r/g, '')
                 .split('__OPNSENSE_DONE__')[0]
-                // Remove the echoed command line itself (first line)
-                .replace(/^[^\n]*\n/, '')
+                .replace(/^[^\n]*\n/, '') // strip echoed command line
                 .trim();
 
               stage = 'done';
@@ -149,7 +149,6 @@ function runOPNsenseSSH(cfg, command) {
         stream.on('close', function () {
           clearTimeout(timeout);
           if (stage !== 'done') {
-            // Ended before we got a result
             conn.end();
             reject(new Error('OPNsense SSH stream closed before command completed (stage: ' + stage + ')'));
           }
@@ -164,11 +163,11 @@ function runOPNsenseSSH(cfg, command) {
     });
 
     conn.connect({
-      host:          cfg.sshHost     || cfg.host,
-      port:          cfg.sshPort     || 22,
-      username:      cfg.sshUser     || 'root',
-      password:      cfg.sshPassword || undefined,
-      privateKey:    cfg.sshKeyPath  ? require('fs').readFileSync(cfg.sshKeyPath) : undefined,
+      host:          cfg.ssh_host  || cfg.host,
+      port:          cfg.ssh_port  || 22,
+      username:      cfg.username  || 'root',
+      password:      cfg.password  || undefined,
+      privateKey:    cfg.key_path  ? require('fs').readFileSync(cfg.key_path) : undefined,
       readyTimeout:  10000,
       hostVerifier:  function () { return true; },
     });
@@ -181,7 +180,7 @@ function runOPNsenseSSH(cfg, command) {
 
 /**
  * Source 1 - Kea DHCPv4 API (OPNsense >= 24.1 with Kea backend).
- * Returns null if the endpoint is not present.
+ * Returns null if the endpoint is not present (falls through to config.xml).
  */
 async function fetchReservationsKea(cfg) {
   try {
@@ -210,8 +209,7 @@ async function fetchReservationsKea(cfg) {
  */
 async function fetchReservationsConfigXml(cfg) {
   try {
-    // We only need the <dhcpd> section; pipe through grep to limit data
-    var xmlChunk = await runOPNsenseSSH(cfg, "cat /conf/config.xml");
+    var xmlChunk = await runOPNsenseSSH(cfg, 'cat /conf/config.xml');
 
     var map     = {};
     var blockRe = /<staticmap>([\s\S]*?)<\/staticmap>/g;
@@ -303,9 +301,9 @@ function startPolling(cfg) {
     logger.warn('[OPNsense] Not configured - DHCP enrichment disabled. Set opnsense.host/apiKey/apiSecret in config.yaml.');
     return;
   }
-  logger.info('[OPNsense] Starting DHCP polling against ' + cfg.host + ' every ' + (cfg.pollInterval || 60) + 's');
+  logger.info('[OPNsense] Starting DHCP polling against ' + cfg.host + ' every ' + (cfg.poll_interval || 60) + 's');
   refresh(cfg);
-  setInterval(function () { refresh(cfg); }, (cfg.pollInterval || 60) * 1000);
+  setInterval(function () { refresh(cfg); }, (cfg.poll_interval || 60) * 1000);
 }
 
 module.exports = { startPolling, getDhcpInfo };
