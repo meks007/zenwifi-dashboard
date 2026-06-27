@@ -323,11 +323,10 @@ async function fetchNeighMap(ap) {
     return {};
   }
 }
-
 /**
  * Read /tmp/aplist.json and /tmp/relist.json from the master node and
  * return a Map<lowercase-mac, nodeId> covering every MAC that belongs to
- * a mesh node (satellites and master alike).
+ * a mesh node (satellites and master alike), plus the raw nodeGroups map.
  *
  * Two-step strategy:
  *
@@ -344,7 +343,11 @@ async function fetchNeighMap(ap) {
  *   BSSIDs are merged into that group. This handles the common case where
  *   the relist primary key and the aplist BSSID differ by one bit.
  *
- * The final flat meshMap maps every individual MAC to its nodeId.
+ * Returns { meshMap, nodeGroups } where:
+ *   meshMap    - flat Map<mac, nodeId> for O(1) lookups
+ *   nodeGroups - Map<nodeId, Set<mac>> preserving all MACs per node,
+ *                used by resolveNeighIp() to find the IP via any backhaul
+ *                STA MAC when the primary/AP MAC is absent from the neigh table.
  */
 async function fetchMeshNodeMacs(ap) {
   // nodeId (string) -> Set of lowercase MACs
@@ -445,7 +448,9 @@ async function fetchMeshNodeMacs(ap) {
 
   var nodeCount = new Set(meshMap.values()).size;
   logger.info('[SSH] ' + ap.name + ' mesh MACs mapped: ' + meshMap.size + ' MAC(s) across ' + nodeCount + ' node(s)');
-  return meshMap;
+  // Return both the flat lookup map and the group map so callers can walk all
+  // MACs that belong to a node when resolving IPs from the neigh table.
+  return { meshMap: meshMap, nodeGroups: nodeGroups };
 }
 
 // ---------------------------------------------------------------------------
@@ -460,11 +465,37 @@ async function fetchMeshNodeMacs(ap) {
  * @param {object}      neighMacToIp  MAC->IP from fetchNeighMap on master (or {})
  *                                    Used for mesh node IP resolution. Must come from
  *                                    the master -- satellites have incomplete neigh tables.
+ * @param {Map|null}    nodeGroups    nodeId -> Set<mac> from fetchMeshNodeMacs (or null)
+ *                                    Allows IP resolution via any backhaul STA MAC in the
+ *                                    group, not only the primary/AP MAC that the assoclist
+ *                                    reports (which may not appear in the neigh table at all).
  * @returns {Array} client objects
  */
-async function fetchClientsFromAP(ap, clientlistMap, meshMap, neighMacToIp) {
+async function fetchClientsFromAP(ap, clientlistMap, meshMap, neighMacToIp, nodeGroups) {
   var clients = [];
   var neigh = neighMacToIp || {};
+
+  /**
+   * Resolve the management IP for a mesh node by checking every MAC in its
+   * node group against the neigh table. The primary/AP MAC (e.g. a8:5e:45:fe:ae:fc)
+   * is often absent from ip-neigh because the router only sees the backhaul STA
+   * MAC (e.g. ae:5e:45:fe:ae:fe) at L2. Walking the whole group finds the right IP.
+   *
+   * @param {string} nodeId  - the nodeId (= primary MAC, lowercase)
+   * @returns {string|null}
+   */
+  function resolveNeighIp(nodeId) {
+    if (neigh[nodeId]) return neigh[nodeId];
+    if (!nodeGroups) return null;
+    var group = nodeGroups.get(nodeId);
+    if (!group) return null;
+    var found = null;
+    group.forEach(function (groupMac) {
+      if (!found && neigh[groupMac]) found = neigh[groupMac];
+    });
+    return found;
+  }
+
   logger.info('[SSH] Polling AP: ' + ap.name + ' (' + ap.host + ':' + (ap.ssh_port || 22) + ')');
 
   try {
@@ -502,7 +533,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap, neighMacToIp) {
             var meshNodeId = meshMap ? (meshMap.get(staMac) || null) : null;
             var clEntry = clientlistMap ? clientlistMap[staMac] : null;
             var ip = (clEntry && clEntry.ip) ? clEntry.ip
-              : (meshNodeId !== null ? (neigh[staMac] || neigh[meshNodeId] || null) : (arpMacToIp[staMac] || null));
+              : (meshNodeId !== null ? resolveNeighIp(meshNodeId) : (arpMacToIp[staMac] || null));
             var rssi = (clEntry && clEntry.rssi !== null) ? clEntry.rssi : staRssi;
             var stats = statsMap.get(staMac) || { tx_bytes: null, rx_bytes: null };
             clients.push({
@@ -530,7 +561,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap, neighMacToIp) {
             var meshId = meshMap ? (meshMap.get(mac) || null) : null;
             var clE = clientlistMap ? clientlistMap[mac] : null;
             var macIp = (clE && clE.ip) ? clE.ip
-              : (meshId !== null ? (neigh[mac] || neigh[meshId] || null) : (arpMacToIp[mac] || null));
+              : (meshId !== null ? resolveNeighIp(meshId) : (arpMacToIp[mac] || null));
             var macRssi = (clE && clE.rssi !== null) ? clE.rssi : null;
             if (macRssi === null) {
               macRssi = await getRssiBroadcom(ap, bcIface, mac);
