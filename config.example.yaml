@@ -12,30 +12,16 @@ mqtt:
 # Polling involves multiple SSH commands per AP, so keep this sane (>=30 recommended).
 polling_interval_seconds: 30
 
-# How often to re-run wireless interface discovery per AP (in poll cycles).
-#
-# On every AP, the backend must first detect the driver (Broadcom/Atheros) and
-# then probe which interfaces (e.g. eth4, wl0.1, ath0) are active before it can
-# query the client association lists. This discovery is relatively expensive
-# (several SSH round-trips) but the result almost never changes at runtime.
-#
-# With this setting the result is cached and re-used for N-1 consecutive polls.
-# Discovery always runs on the very first poll after startup, and then again
-# once every N poll cycles.
-#
-#   Example: polling_interval_seconds: 30, iface_discovery_interval: 10
-#   -> discovery runs on poll 0, 10, 20, 30, ... (every ~5 minutes)
-#
-# Set to 1 to disable caching and always run discovery (original behaviour).
-# Default: 10
-iface_discovery_interval: 10
-
 # Size of the in-memory log ring buffer (number of log lines kept).
 # Older entries are dropped when the buffer is full. Default: 500.
 log_buffer_size: 500
 
 # Set to true to log every SSH command and its output (very verbose).
 debug_logging: false
+
+# Whether to include IPv6 addresses in the IP column.
+# Defaults to false: only IPv4 addresses are shown.
+show_ipv6: false
 
 access_points:
   # Mark exactly one AP as master: true. The master node maintains
@@ -117,9 +103,17 @@ opnsense:
   #
   # The API key user needs the "Host Discovery: Search" privilege in addition
   # to the DHCP privilege used for lease enrichment.
+  #
+  # interface_labels: optional map of OPNsense interface name (lowercase) to a
+  # human-readable label shown in the "Access Point" column as "Wired <Label>".
+  # If an interface has no label entry, the raw interface name is used.
   neighbor_discovery:
     enabled: true
     interfaces:
       - lan
       # - opt1
       # - vlan10
+    interface_labels:
+      lan: "LAN"
+      # opt1: "IoT"
+      # vlan10: "Servers"
