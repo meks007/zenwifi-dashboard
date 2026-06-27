@@ -20,8 +20,9 @@ logger.setBroadcaster(function(payload) { broadcast(payload); });
 
 const config = configModule.loadConfig();
 
-// Apply debug setting from config (debug_logging: true/false)
+// Apply config-driven settings to logger
 logger.setDebug(!!config.debug_logging);
+logger.setMaxLines(config.log_buffer_size || 500);
 
 let currentClients = new Map();
 let prevClients = new Map();
@@ -147,8 +148,9 @@ mqttModule.connect(config, async function(mac) {
 });
 
 // Start polling
-const intervalMs = (config.polling_interval_seconds || 10) * 1000;
-logger.info('[Server] Starting. Polling every ' + config.polling_interval_seconds + 's');
+const intervalMs = (config.polling_interval_seconds || 30) * 1000;
+logger.info('[Server] Starting. Polling every ' + (config.polling_interval_seconds || 30) + 's');
+logger.info('[Server] Log buffer size: ' + (config.log_buffer_size || 500) + ' lines');
 logger.info('[Server] APs: ' + (config.access_points || []).map(function(a) { return a.name; }).join(', '));
 logger.info('[Server] Debug logging: ' + (config.debug_logging ? 'ON' : 'OFF'));
 poll();
