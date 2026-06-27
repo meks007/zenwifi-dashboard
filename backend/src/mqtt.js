@@ -68,7 +68,7 @@ function publish(topic, payload, retain) {
 }
 
 /**
- * Publish per-client and per-AP state topics.
+ * Publish per-client and per-AP state topics, plus a global stats summary.
  *
  * Per client (retained):
  *   <prefix>/clients/<mac>/state      online | offline
@@ -79,6 +79,10 @@ function publish(topic, payload, retain) {
  *
  * Per AP (retained):
  *   <prefix>/ap/<name>/status         JSON: online, clients, last_seen, error
+ *
+ * Global (retained):
+ *   <prefix>/stats                    JSON: total_clients, mesh_nodes,
+ *                                          regular_clients, timestamp
  */
 function publishClientStates(prevClients, currentClients, apStatus) {
   const prefix = getPrefix();
@@ -119,6 +123,19 @@ function publishClientStates(prevClients, currentClients, apStatus) {
       });
     });
   }
+
+  var meshCount = 0;
+  var regularCount = 0;
+  currentClients.forEach(function (c) {
+    if (c.isMeshNode) meshCount++;
+    else regularCount++;
+  });
+  publish(prefix + '/stats', {
+    total_clients: regularCount + meshCount,
+    mesh_nodes: meshCount,
+    regular_clients: regularCount,
+    timestamp: now,
+  });
 }
 
 function isConnected() { return !!(mqttClient && mqttClient.connected); }
