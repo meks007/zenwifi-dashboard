@@ -17,7 +17,8 @@
 //     - call this every time the discovered client list changes
 //
 //   pinger.triggerCycle()
-//     - kick off a ping cycle immediately (non-blocking); safe to call at any time
+//     - run a ping cycle NOW if the interval has elapsed (or no cycle has run yet)
+//     - safe to call on every poll; the pinger decides internally whether it's due
 //     - does nothing if a cycle is already in progress
 //
 //   pinger.getStatus(mac)
@@ -36,8 +37,10 @@ const statusMap = new Map();
 // { mac, ip } for the current set of discovered clients
 let knownClients = [];
 
-let _onStateChange  = null;
-let _cycleRunning   = false;
+let _onStateChange    = null;
+let _cycleRunning     = false;
+let _intervalMs       = 5 * 60 * 1000; // default 5 minutes; updated by start()
+let _lastCycleStartAt = 0;             // epoch ms of when the last cycle began
 
 /**
  * Ping a single IP address with 3 packets, 1 s timeout per packet.
@@ -67,7 +70,9 @@ async function runPingCycle() {
   }
   if (knownClients.length === 0) return;
 
-  _cycleRunning = true;
+  _cycleRunning     = true;
+  _lastCycleStartAt = Date.now();
+
   logger.debug('[Pinger] Starting ping cycle for ' + knownClients.length + ' client(s)');
 
   // Snapshot the list at cycle start so mid-cycle setClients() calls don't
@@ -117,10 +122,13 @@ function setClients(entries) {
 }
 
 /**
- * Kick off a ping cycle immediately without waiting for the scheduled interval.
- * Safe to call at any time; a guard prevents overlapping cycles.
+ * Trigger a ping cycle if the configured interval has elapsed since the last
+ * one started (or if no cycle has ever run). Safe to call on every poll().
+ * A guard also prevents two cycles from overlapping.
  */
 function triggerCycle() {
+  var due = (Date.now() - _lastCycleStartAt) >= _intervalMs;
+  if (!due) return;
   runPingCycle().catch(function(err) {
     logger.error('[Pinger] Unexpected error in triggered cycle: ' + err.message);
   });
@@ -137,15 +145,14 @@ function isOnline(mac) {
 }
 
 function start(intervalMinutes, onStateChange) {
-  var mins = intervalMinutes || 5;
+  var mins   = intervalMinutes || 5;
+  _intervalMs    = mins * 60 * 1000;
   _onStateChange = onStateChange || null;
 
   logger.info('[Pinger] Starting; will ping discovered clients every ' + mins + ' minute(s)');
 
-  // The first scheduled cycle runs after the first interval elapses.
-  // Callers that want an immediate check after discovery should call
-  // triggerCycle() explicitly right after setClients().
-  setInterval(runPingCycle, mins * 60 * 1000);
+  // No setInterval here - poll() drives timing via triggerCycle(), which
+  // checks the elapsed time itself and only runs when the interval is due.
 }
 
 module.exports = { start, setClients, triggerCycle, getStatus, isOnline };
