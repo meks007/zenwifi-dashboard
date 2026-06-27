@@ -461,6 +461,10 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
     // /proc/net/arp can accumulate many stale entries for the same MAC
     // (multiple old IPs), causing the wrong IP to be shown for a node.
     // Filtering to REACHABLE guarantees the entry is currently confirmed.
+    // Two lookups are attempted per mesh node: first by the sta/backhaul MAC
+    // seen in the assoclist, then by the nodeId (primary MAC) as fallback,
+    // because ip neigh tracks the primary MAC while the assoclist reports
+    // the locally-generated sta MAC variant.
     var neighOut = await runSSH(ap, 'ip neigh show 2>/dev/null || echo ""');
     var neighMacToIp = {};
     neighOut.split('\n').forEach(function (line) {
@@ -496,7 +500,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             var meshNodeId = meshMap ? (meshMap.get(staMac) || null) : null;
             var clEntry = clientlistMap ? clientlistMap[staMac] : null;
             var ip = (clEntry && clEntry.ip) ? clEntry.ip
-              : (meshNodeId !== null ? (neighMacToIp[staMac] || null) : (arpMacToIp[staMac] || null));
+              : (meshNodeId !== null ? (neighMacToIp[staMac] || neighMacToIp[meshNodeId] || null) : (arpMacToIp[staMac] || null));
             var rssi = (clEntry && clEntry.rssi !== null) ? clEntry.rssi : staRssi;
             var stats = statsMap.get(staMac) || { tx_bytes: null, rx_bytes: null };
             clients.push({
@@ -524,7 +528,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             var meshId = meshMap ? (meshMap.get(mac) || null) : null;
             var clE = clientlistMap ? clientlistMap[mac] : null;
             var macIp = (clE && clE.ip) ? clE.ip
-              : (meshId !== null ? (neighMacToIp[mac] || null) : (arpMacToIp[mac] || null));
+              : (meshId !== null ? (neighMacToIp[mac] || neighMacToIp[meshId] || null) : (arpMacToIp[mac] || null));
             var macRssi = (clE && clE.rssi !== null) ? clE.rssi : null;
             if (macRssi === null) {
               macRssi = await getRssiBroadcom(ap, bcIface, mac);
