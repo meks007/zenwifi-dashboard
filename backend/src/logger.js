@@ -1,20 +1,24 @@
+'use strict';
+
 // Centralised in-memory ring-buffer logger.
-// Buffer size and debug flag are set at runtime from config via
-// setMaxLines(n) and setDebug(bool), called from index.js after config loads.
+// Buffer size and debug mode are controlled at runtime via setMaxLines/setDebug,
+// called from index.js after config is loaded.
 
-let MAX_LINES = 500;
-let buffer = [];
-let wsBroadcast = null;
-let debugEnabled = false;
-
-function setMaxLines(n) {
-  MAX_LINES = (Number.isInteger(n) && n > 0) ? n : 500;
-  // Trim existing buffer if new limit is smaller
-  if (buffer.length > MAX_LINES) buffer = buffer.slice(buffer.length - MAX_LINES);
-}
+var maxLines = 500;
+var buffer = [];
+var wsBroadcast = null;
+var debugEnabled = false;
 
 function setDebug(enabled) {
   debugEnabled = !!enabled;
+}
+
+function setMaxLines(n) {
+  maxLines = (n && n > 0) ? n : 500;
+  // Trim existing buffer if it already exceeds the new limit
+  if (buffer.length > maxLines) {
+    buffer = buffer.slice(buffer.length - maxLines);
+  }
 }
 
 function setBroadcaster(fn) {
@@ -26,7 +30,7 @@ function nowIso() {
 }
 
 function pushLine(level, msg, meta) {
-  const entry = {
+  var entry = {
     ts: nowIso(),
     level: level,
     msg: msg,
@@ -34,9 +38,11 @@ function pushLine(level, msg, meta) {
   };
 
   buffer.push(entry);
-  if (buffer.length > MAX_LINES) buffer = buffer.slice(buffer.length - MAX_LINES);
+  if (buffer.length > maxLines) {
+    buffer = buffer.slice(buffer.length - maxLines);
+  }
 
-  const metaStr = meta ? ' ' + JSON.stringify(meta) : '';
+  var metaStr = meta ? ' ' + JSON.stringify(meta) : '';
   process.stdout.write('[' + entry.ts + '] [' + level.toUpperCase() + '] ' + msg + metaStr + '\n');
 
   if (wsBroadcast) {
