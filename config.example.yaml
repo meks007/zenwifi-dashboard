@@ -50,20 +50,40 @@ access_points:
 # ---------------------------------------------------------------------------
 # OPNsense DHCP integration (optional)
 # ---------------------------------------------------------------------------
-# When configured, the backend queries your OPNsense router's REST API on
-# every poll cycle to retrieve DHCP leases and static mappings (reservations).
-# Each WiFi client is then enriched with a 'dhcp' field containing:
-#   ip, hostname, description, leaseEnds, leaseType, hasReservation
+# When configured, the backend queries OPNsense for:
+#   - Dynamic leases  : via REST API  -> client.dhcp.ip / hostname / leaseEnds
+#   - Static mappings : via SSH       -> client.dhcp.description / hasReservation
 #
-# API credentials: System -> Access -> Users -> <user> -> API keys
-# Required privilege: DHCP: Leases (read-only is sufficient)
+# OPNsense is a separate box with its own IP and credentials.
 #
-# Remove this block or leave host empty to disable DHCP enrichment.
+# REST API credentials:
+#   System -> Access -> Users -> <user> -> API keys
+#   Required privilege: DHCP: Leases (read-only is sufficient)
+#
+# SSH credentials:
+#   System -> Settings -> Administration -> Secure Shell -> enable SSH
+#   Must use root (or a user that can sudo to root) because opnsense-shell
+#   (the interactive console menu) is only accessible by UID 0.
+#   When logging in as root, OPNsense presents a numbered menu - the backend
+#   automatically sends "8" to select the Shell option before running commands.
+#
+# Remove this block or leave host empty to disable DHCP enrichment entirely.
 # ---------------------------------------------------------------------------
 opnsense:
-  host: 192.168.1.1       # OPNsense IP or hostname (same host as your gateway)
-  port: 443               # HTTPS port (default: 443)
+  # --- REST API (leases) ---
+  host: 192.168.x.x        # OPNsense IP or hostname
+  port: 443                 # HTTPS port (default: 443)
   apiKey: your-api-key
   apiSecret: your-api-secret
-  verifySsl: false        # Set to true if OPNsense has a valid/trusted TLS certificate
-  pollInterval: 60        # How often (seconds) to refresh DHCP data from OPNsense
+  verifySsl: false          # Set to true if OPNsense has a valid/trusted TLS cert
+
+  # --- SSH (static reservations via /conf/config.xml) ---
+  # sshHost defaults to the value of 'host' above if omitted
+  sshHost: 192.168.x.x
+  sshPort: 22
+  sshUser: root
+  sshPassword: your-root-password
+  # sshKeyPath: /run/secrets/opnsense_id_rsa   # path to private key (alternative to password)
+
+  # --- Polling ---
+  pollInterval: 60          # How often (seconds) to refresh DHCP data
