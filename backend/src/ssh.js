@@ -42,7 +42,6 @@ function runSSH(ap, command) {
     });
   });
 }
-
 // ---------------------------------------------------------------------------
 // Driver detection
 // ---------------------------------------------------------------------------
@@ -85,7 +84,6 @@ async function probeIfaceBroadcom(ap, iface) {
     return false;
   }
 }
-
 async function getInterfacesBroadcom(ap) {
   try {
     var out = await runSSH(ap, "ip -o link show | awk -F': ' '{print $2}' | grep -E '^wl|^eth'");
@@ -128,7 +126,6 @@ async function getRssiBroadcom(ap, iface, mac) {
     return null;
   }
 }
-
 /**
  * Fetch per-client TX/RX byte counters via "wl -i <iface> sta_info <mac>".
  * Uses unicast byte counters to avoid inflated totals from mcast/bcast traffic.
@@ -164,7 +161,6 @@ async function getStatsBroadcom(ap, iface, mac) {
 async function deauthBroadcom(ap, iface, mac) {
   await runSSH(ap, 'wl -i ' + iface + ' deauthenticate ' + mac + ' 2>/dev/null');
 }
-
 // ---------------------------------------------------------------------------
 // Atheros helpers
 // ---------------------------------------------------------------------------
@@ -203,7 +199,6 @@ async function getAssoclistAtheros(ap, iface) {
   var out = await runSSH(ap, 'wlanconfig ' + iface + ' list sta 2>/dev/null || echo ""');
   return parseWlanconfig(out);
 }
-
 /**
  * Fetch TX/RX byte counters for all stations on an Atheros interface via a
  * single "hostapd_cli -i <iface> all_sta" call.
@@ -266,7 +261,6 @@ async function getAllStaStatsAtheros(ap, iface) {
   }
   return statsMap;
 }
-
 async function deauthAtheros(ap, iface, mac) {
   await runSSH(ap, 'wlanconfig ' + iface + ' kick ' + mac + ' 2>/dev/null');
 }
@@ -335,7 +329,6 @@ async function fetchMeshNodeMacs(ap) {
   function ensureGroup(nodeId) {
     if (!nodeGroups.has(nodeId)) nodeGroups.set(nodeId, new Set());
   }
-
   function addToGroup(nodeId, mac) {
     var id = nodeId.toLowerCase();
     var m = mac.toLowerCase();
@@ -354,16 +347,25 @@ async function fetchMeshNodeMacs(ap) {
   }
 
   // Step 1: build satellite node groups from relist.json
+  // FIX: relist.json primary keys arrive from the router in uppercase (e.g.
+  // "A8:5E:45:FE:D3:8C"). MAC_RE only matches lowercase, so normalise to
+  // lowercase BEFORE calling isMac() -- otherwise every satellite is silently
+  // dropped and meshMap stays empty, causing all mesh nodes to be reported
+  // as regular clients.
   try {
     var reRaw = await runSSH(ap, 'cat /tmp/relist.json 2>/dev/null');
     if (reRaw && reRaw.trim()) {
       var reData = JSON.parse(reRaw);
       Object.keys(reData).forEach(function (primaryMac) {
-        if (!isMac(primaryMac)) return;
-        var nodeId = primaryMac.toLowerCase();
-        addToGroup(nodeId, primaryMac);
+        var primaryMacLower = primaryMac.toLowerCase();
+        if (!isMac(primaryMacLower)) return;
+        var nodeId = primaryMacLower;
+        addToGroup(nodeId, primaryMacLower);
         Object.values(reData[primaryMac]).forEach(function (mac) {
-          if (mac && isMac(mac)) addToGroup(nodeId, mac);
+          if (mac) {
+            var macLower = mac.toLowerCase();
+            if (isMac(macLower)) addToGroup(nodeId, macLower);
+          }
         });
       });
       logger.info('[SSH] ' + ap.name + ' relist.json: ' + nodeGroups.size + ' satellite(s)');
@@ -381,10 +383,9 @@ async function fetchMeshNodeMacs(ap) {
       nodeKeys.forEach(function (nodeIndex) {
         var node = apData[nodeIndex];
         var bssids = Object.values(node)
-          .filter(function (m) { return m && isMac(m); })
+          .filter(function (m) { return m && isMac(m.toLowerCase()); })
           .map(function (m) { return m.toLowerCase(); });
         if (bssids.length === 0) return;
-
         if (nodeIndex === '0') {
           // master: give its BSSIDs a provisional nodeId so they appear in
           // meshMap and are flagged as infrastructure
@@ -429,7 +430,6 @@ async function fetchMeshNodeMacs(ap) {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
 /**
  * Fetch all wireless clients from an AP.
  *
@@ -467,7 +467,6 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
 
           // One SSH call fetches stats for all stations on this interface
           var statsMap = await getAllStaStatsAtheros(ap, athIface);
-
           for (var si = 0; si < stations.length; si++) {
             var staMac = stations[si].mac;
             var staRssi = stations[si].rssi;
@@ -523,7 +522,6 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
         }
       }
     }
-
     logger.info('[SSH] ' + ap.name + ' done: ' + clients.length + ' client(s) total');
   } catch (err) {
     logger.error('[SSH] Fatal error polling ' + ap.name + ': ' + err.message);
