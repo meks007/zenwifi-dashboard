@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 const COLUMNS = [
   { key: 'mac', label: 'MAC Address' },
+  { key: 'vendor', label: 'Vendor' },
   { key: 'hostname', label: 'Hostname' },
   { key: 'ip', label: 'IP Address' },
   { key: 'apName', label: 'Access Point' },
@@ -25,6 +26,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     const q = search.toLowerCase();
     return (
       (c.mac && c.mac.toLowerCase().includes(q)) ||
+      (c.vendor && c.vendor.toLowerCase().includes(q)) ||
       (c.hostname && c.hostname.toLowerCase().includes(q)) ||
       (c.ip && c.ip.toLowerCase().includes(q)) ||
       (c.apName && c.apName.toLowerCase().includes(q))
@@ -59,10 +61,10 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
         <input
           type="text"
-          placeholder="Search MAC, hostname, IP, AP..."
+          placeholder="Search MAC, vendor, hostname, IP, AP..."
           value={search}
           onChange={function(e) { setSearch(e.target.value); }}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full sm:w-72"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full sm:w-80"
         />
       </div>
 
@@ -97,6 +99,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               return (
                 <tr key={c.mac} className="border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition-colors">
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
+                  <td className="px-4 py-3 text-xs text-gray-400">{c.vendor || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3 text-gray-300">{c.hostname || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{c.ip || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3">
