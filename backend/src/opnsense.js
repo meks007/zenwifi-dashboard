@@ -232,6 +232,26 @@ async function fetchNeighbors(cfg) {
     var now    = Date.now();
     var newMap = {};
 
+    // Collect the distinct interface names present in the raw API response.
+    // Logged at info level so the user can see what to put in config.yaml
+    // when the configured names do not match and zero hosts are returned.
+    var seenIfaces = new Set();
+    rows.forEach(function (row) {
+      var iface = (row.interface || row.if || '').toLowerCase();
+      if (iface) seenIfaces.add(iface);
+    });
+
+    if (rows.length === 0) {
+      logger.info('[OPNsense] Neighbor discovery: API returned 0 rows (service may have no entries yet)');
+    } else {
+      logger.info(
+        '[OPNsense] Neighbor discovery: ' + rows.length + ' raw row(s) received; ' +
+        'interface(s) present in response: ' +
+        (seenIfaces.size > 0 ? Array.from(seenIfaces).sort().join(', ') : '(none)') +
+        ' | configured filter: ' + Array.from(allowedIfaces).join(', ')
+      );
+    }
+
     rows.forEach(function (row) {
       var iface = (row.interface || row.if || '').toLowerCase();
       if (!allowedIfaces.has(iface)) return;
@@ -259,7 +279,7 @@ async function fetchNeighbors(cfg) {
     neighborMap = newMap;
     logger.info(
       '[OPNsense] Neighbor discovery: ' + Object.keys(neighborMap).length +
-      ' host(s) on interface(s): ' + Array.from(allowedIfaces).join(', ')
+      ' host(s) matched interface filter (' + Array.from(allowedIfaces).join(', ') + ')'
     );
   } catch (err) {
     // Graceful degradation: the endpoint requires OPNsense 26.1+
