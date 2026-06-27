@@ -10,6 +10,7 @@ const mqttModule = require('./mqtt');
 const logger = require('./logger');
 const ouiModule = require('./oui');
 const opnsense = require('./opnsense');
+const pinger = require('./pinger');
 
 const app = express();
 app.use(cors());
@@ -39,6 +40,9 @@ const ifaceDiscoveryInterval = config.iface_discovery_interval || 10;
 // Whether to include IPv6 addresses. Defaults to false.
 const showIpv6 = config.show_ipv6 === true;
 
+// How often (in minutes) to re-ping all discovered clients. Default: 5.
+const pingIntervalMinutes = config.ping_interval_minutes || 5;
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
@@ -56,9 +60,17 @@ function broadcast(data) {
 }
 
 function broadcastState() {
+  // Exclude discovered clients that are definitively offline.
+  // Clients not yet checked (isOnline == null) are included so they appear
+  // immediately after discovery until the first ping cycle completes.
+  var visible = Array.from(currentClients.values()).filter(function(c) {
+    if (c.connectionType !== 'discovered') return true;
+    return pinger.isOnline(c.mac) !== false;
+  });
+
   broadcast({
     type: 'clients',
-    clients: Array.from(currentClients.values()),
+    clients: visible,
     apStatus: apStatus,
     mqttConnected: mqttModule.isConnected(),
     timestamp: new Date().toISOString(),
@@ -240,8 +252,8 @@ async function poll() {
   var allClients = dhcpEnriched;
   var ndCfg = config.opnsense && config.opnsense.neighbor_discovery;
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
-    var wifiMacs      = dhcpEnriched.map(function(c) { return c.mac; });
-    var discovered    = opnsense.getWiredClients(wifiMacs);
+    var wifiMacs       = dhcpEnriched.map(function(c) { return c.mac; });
+    var discovered     = opnsense.getWiredClients(wifiMacs);
     var discoveredRows = discovered.map(function(c) {
       var ifaceLabel = resolveIfaceLabel(c.interface, ndCfg);
       var rawIp = c.ip || null;
@@ -263,9 +275,19 @@ async function poll() {
         lastSeen:       c.lastSeen,
       };
     });
+
     if (discoveredRows.length > 0) {
       logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     }
+
+    // Feed IPs to the pinger and immediately kick off a cycle so newly
+    // discovered hosts get their first reachability check right away rather
+    // than waiting for the next scheduled interval.
+    pinger.setClients(discoveredRows.map(function(c) {
+      return { mac: c.mac, ip: c.ip };
+    }));
+    pinger.triggerCycle();
+
     allClients = dhcpEnriched.concat(discoveredRows);
   }
 
@@ -339,11 +361,19 @@ const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
+logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
 
 mqttModule.connect(config, handleDisconnect);
 
 // Start OPNsense DHCP polling (no-op with a warning if not configured)
 opnsense.startPolling(config.opnsense);
+
+// Start pinger - scheduled interval only; the first cycle is triggered by poll()
+// immediately after the first neighbor discovery pass.
+pinger.start(pingIntervalMinutes, function(mac, online) {
+  logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
+  broadcastState();
+});
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
