@@ -53,7 +53,6 @@ function fetchPage(cfg, apiPath, page, rowCount) {
 async function fetchAllRows(cfg, apiPath) {
   var allRows = [];
   var page    = 1;
-
   for (;;) {
     var result = await fetchPage(cfg, apiPath, page, ROWS_PER_PAGE);
     if (result.status < 200 || result.status >= 300) {
@@ -105,7 +104,6 @@ function runOPNsenseSSH(cfg, command) {
 
         stream.on('data', function (data) { stdout += data.toString(); });
         stream.stderr.on('data', function (data) { stderr += data.toString(); });
-
         stream.on('close', function (code) {
           clearTimeout(timeout);
           conn.end();
@@ -141,7 +139,6 @@ function runOPNsenseSSH(cfg, command) {
 // ---------------------------------------------------------------------------
 // Reservation sources
 // ---------------------------------------------------------------------------
-
 async function fetchReservationsKea(cfg) {
   try {
     var rows = await fetchAllRows(cfg, '/api/kea/dhcpv4/searchReservation');
@@ -186,7 +183,6 @@ async function fetchReservationsConfigXml(cfg) {
       var m = new RegExp('<' + tag + '>([^<]*)<\\/' + tag + '>').exec(text);
       return m ? m[1].trim() : null;
     };
-
     var block;
     while ((block = blockRe.exec(xmlText)) !== null) {
       var inner = block[1];
@@ -209,30 +205,18 @@ async function fetchReservationsConfigXml(cfg) {
 
 // ---------------------------------------------------------------------------
 // Neighbor discovery (wired clients)
+//
+// OPNsense hostdiscovery API response schema (confirmed from live log):
+//   interface_name  - e.g. "LAN" (uppercase)
+//   ether_address   - MAC address
+//   ip_address      - IP address
+//   last_seen       - ISO datetime string, e.g. "2026-06-27 21:15:45"
+//   first_seen      - ISO datetime string
+//   organization_name - OUI vendor name
+//   source          - e.g. "discovery"
 // ---------------------------------------------------------------------------
 
 const NEIGHBOR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-/**
- * Extract the interface identifier from a hostdiscovery row.
- *
- * OPNsense versions differ in which field carries the interface name:
- *   - Older builds: row.interface or row.if  (BSD device name, e.g. igb0)
- *   - Newer builds: row.if_descr or row.ifdescr (logical alias, e.g. LAN)
- *
- * We try every known variant and return an empty string when none is present
- * so the caller can detect and log the unknown schema.
- */
-function extractIface(row) {
-  return (
-    row.interface  ||
-    row.if_descr   ||
-    row.ifdescr    ||
-    row.if         ||
-    row.iface      ||
-    ''
-  ).toLowerCase();
-}
 
 async function fetchNeighbors(cfg) {
   var ndCfg = cfg.neighbor_discovery;
@@ -243,60 +227,41 @@ async function fetchNeighbors(cfg) {
     return;
   }
 
+  // Build a lowercase set of configured interface names for case-insensitive match.
+  // OPNsense returns "LAN", "WAN", etc. in uppercase; config uses lowercase ("lan").
   var allowedIfaces = new Set(
     (ndCfg.interfaces && ndCfg.interfaces.length > 0 ? ndCfg.interfaces : ['lan'])
       .map(function (i) { return i.toLowerCase(); })
   );
 
   try {
-    var rows = await fetchAllRows(cfg, '/api/hostdiscovery/service/search');
-    var now  = Date.now();
-
-    if (rows.length === 0) {
-      logger.info('[OPNsense] Neighbor discovery: API returned 0 rows (service may have no entries yet)');
-      neighborMap = {};
-      return;
-    }
-
-    // Log the full key set of the first row once so the interface field name
-    // is always visible in the log, making schema mismatches trivial to spot.
-    logger.info('[OPNsense] Neighbor discovery: first row keys: ' + Object.keys(rows[0]).join(', '));
-    logger.info('[OPNsense] Neighbor discovery: first row sample: ' + JSON.stringify(rows[0]));
-
-    // Collect distinct interface values seen across all rows for diagnostics.
-    var seenIfaces = new Set();
-    rows.forEach(function (row) {
-      var iface = extractIface(row);
-      if (iface) seenIfaces.add(iface);
-    });
-
-    logger.info(
-      '[OPNsense] Neighbor discovery: ' + rows.length + ' raw row(s); ' +
-      'interface values seen: ' +
-      (seenIfaces.size > 0 ? Array.from(seenIfaces).sort().join(', ') : '(none - check first row sample above)') +
-      ' | configured filter: ' + Array.from(allowedIfaces).join(', ')
-    );
-
+    var rows   = await fetchAllRows(cfg, '/api/hostdiscovery/service/search');
+    var now    = Date.now();
     var newMap = {};
+
+    logger.debug('[OPNsense] Neighbor discovery: ' + rows.length + ' raw row(s) received; configured filter: ' + Array.from(allowedIfaces).join(', '));
+
     rows.forEach(function (row) {
-      var iface = extractIface(row);
+      // Field name confirmed from live API response: interface_name (uppercase value)
+      var iface = (row.interface_name || '').toLowerCase();
       if (!allowedIfaces.has(iface)) return;
 
-      // OPNsense may return a Unix timestamp (seconds) or an ISO date string
+      // last_seen is an ISO datetime string: "2026-06-27 21:15:45"
       var lastSeenMs = null;
-      var raw = row.lastseen || row.last_seen || row.lastSeen || null;
-      if (raw !== null && raw !== undefined) {
-        var n = Number(raw);
-        lastSeenMs = isNaN(n) ? new Date(raw).getTime() : n * 1000;
+      var raw = row.last_seen || null;
+      if (raw) {
+        // Replace space separator with T for reliable Date parsing across runtimes
+        lastSeenMs = new Date(raw.replace(' ', 'T')).getTime();
       }
-      if (lastSeenMs !== null && (now - lastSeenMs) > NEIGHBOR_MAX_AGE_MS) return;
+      if (lastSeenMs !== null && !isNaN(lastSeenMs) && (now - lastSeenMs) > NEIGHBOR_MAX_AGE_MS) return;
 
-      var mac = (row.mac || '').toLowerCase();
+      // Field names confirmed from live API response
+      var mac = (row.ether_address || '').toLowerCase();
       if (!mac) return;
 
       newMap[mac] = {
-        ip:        row.address || row.ip || null,
-        hostname:  row.hostname          || null,
+        ip:        row.ip_address        || null,
+        hostname:  row.organization_name || null, // no dedicated hostname field; use OUI org as fallback
         interface: iface,
         lastSeen:  lastSeenMs,
       };
@@ -305,7 +270,7 @@ async function fetchNeighbors(cfg) {
     neighborMap = newMap;
     logger.info(
       '[OPNsense] Neighbor discovery: ' + Object.keys(neighborMap).length +
-      ' host(s) matched interface filter (' + Array.from(allowedIfaces).join(', ') + ')'
+      ' host(s) on interface(s): ' + Array.from(allowedIfaces).join(', ')
     );
   } catch (err) {
     // Graceful degradation: the endpoint requires OPNsense 26.1+
