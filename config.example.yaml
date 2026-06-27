@@ -8,9 +8,15 @@ mqtt:
   password: mypassword
   topic_prefix: zenwifi
 
-polling_interval_seconds: 10
+# How often (in seconds) to poll all access points for connected clients.
+# Polling involves multiple SSH commands per AP, so keep this sane (>=30 recommended).
+polling_interval_seconds: 30
 
-# Set to true to log every SSH command sent to each AP (useful for debugging)
+# Size of the in-memory log ring buffer (number of log lines kept).
+# Older entries are dropped when the buffer is full. Default: 500.
+log_buffer_size: 500
+
+# Set to true to log every SSH command and its output (very verbose).
 debug_logging: false
 
 access_points:
