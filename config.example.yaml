@@ -1,0 +1,23 @@
+# Zenwifi Dashboard Configuration Example
+# Copy this file to config.yaml and adjust to your environment.
+
+mqtt:
+  host: 192.168.1.10
+  port: 1883
+  username: myuser
+  password: mypassword
+  topic_prefix: zenwifi
+
+polling_interval_seconds: 10
+
+access_points:
+  - name: "Living Room"
+    host: 192.168.1.1
+    ssh_port: 22
+    username: admin
+    password: secret
+  - name: "Office"
+    host: 192.168.1.2
+    ssh_port: 22
+    username: admin
+    password: secret
