@@ -39,10 +39,9 @@ function runSSH(ap, command) {
   });
 }
 
-// Probe a single interface: returns true if wl considers it a valid wireless BSS
+// Probe a single interface: returns true if wl considers it a valid wireless BSS.
 async function probeIface(ap, iface) {
   try {
-    // wl assoclist exits 0 on a valid wireless interface, non-zero otherwise
     await runSSH(ap, 'wl -i ' + iface + ' assoclist > /dev/null 2>&1');
     return true;
   } catch (_) {
@@ -50,19 +49,21 @@ async function probeIface(ap, iface) {
   }
 }
 
-// Discover wireless interfaces using ip link, then validate each wl* candidate
-// with a wl probe. Only wl* interfaces are considered (eth* interfaces either
-// fail the probe or are duplicates of the wl* BSS interfaces on XT8 hardware).
+// Discover wireless interfaces using ip link, then validate each candidate
+// with a wl probe. Both wl* and eth* interfaces are included as candidates:
+// - Mesh slave nodes expose clients on wl* interfaces
+// - Mesh master nodes expose clients on eth* interfaces (e.g. eth4, eth5, eth6)
+// Interfaces that fail the wl probe (eth0-eth3, switch ports etc.) are dropped.
 async function getWirelessInterfaces(ap) {
   try {
     const out = await runSSH(
       ap,
-      "ip -o link show | awk -F': ' '{print $2}' | grep -E '^wl'"
+      "ip -o link show | awk -F': ' '{print $2}' | grep -E '^wl|^eth'"
     );
     const candidates = out.trim().split(/\n/).map(function(s) { return s.trim(); }).filter(Boolean);
 
     if (candidates.length === 0) {
-      logger.warn('[SSH] ' + ap.name + ' no wl* interfaces found via ip link, using fallback [eth4, eth5, eth6]');
+      logger.warn('[SSH] ' + ap.name + ' no wl*/eth* interfaces found via ip link, using fallback [eth4, eth5, eth6]');
       return ['eth4', 'eth5', 'eth6'];
     }
 
@@ -76,7 +77,7 @@ async function getWirelessInterfaces(ap) {
     const valid = probeResults.filter(Boolean);
 
     if (valid.length === 0) {
-      logger.warn('[SSH] ' + ap.name + ' no wl* interfaces passed probe, using fallback [eth4, eth5, eth6]');
+      logger.warn('[SSH] ' + ap.name + ' no interfaces passed wl probe, using fallback [eth4, eth5, eth6]');
       return ['eth4', 'eth5', 'eth6'];
     }
 
@@ -131,6 +132,10 @@ async function fetchClientsFromAP(ap) {
       logger.warn('[SSH] ' + ap.name + ' dnsmasq leases unavailable: ' + leaseErr.message);
     }
 
+    // Track MACs already seen across interfaces to avoid duplicates
+    // (a client may appear on both a wl* and eth* interface on some AP configurations)
+    const seenMacs = new Set();
+
     for (let i = 0; i < ifaces.length; i++) {
       const iface = ifaces[i];
       try {
@@ -143,6 +148,12 @@ async function fetchClientsFromAP(ap) {
 
         for (let j = 0; j < macs.length; j++) {
           const mac = macs[j];
+          if (seenMacs.has(mac)) {
+            logger.debug('[SSH] ' + ap.name + ' skipping duplicate MAC ' + mac + ' on ' + iface);
+            continue;
+          }
+          seenMacs.add(mac);
+
           let rssi = null;
           try {
             const rssiOut = await runSSH(ap, 'wl -i ' + iface + ' rssi ' + mac + ' 2>/dev/null || echo ""');
