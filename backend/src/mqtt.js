@@ -29,7 +29,7 @@ function connect(cfg, disconnectCallback) {
     clean: true,
     reconnectPeriod: 5000,
     will: {
-      topic: prefix + '/bridge/status',
+      topic: prefix + '/bridge/state',
       payload: 'offline',
       qos: 1,
       retain: true,
@@ -38,7 +38,7 @@ function connect(cfg, disconnectCallback) {
 
   mqttClient.on('connect', function () {
     console.log('[MQTT] Connected to ' + url);
-    publish(prefix + '/bridge/status', 'online', true);
+    publish(prefix + '/bridge/state', 'online', true);
     const topic = prefix + '/clients/+/disconnect';
     mqttClient.subscribe(topic, { qos: 1 }, function (err) {
       if (err) console.error('[MQTT] Subscribe error:', err.message);
@@ -67,6 +67,19 @@ function publish(topic, payload, retain) {
   mqttClient.publish(topic, msg, { retain: !!retain, qos: 1 });
 }
 
+/**
+ * Publish per-client and per-AP state topics.
+ *
+ * Per client (retained):
+ *   <prefix>/clients/<mac>/state      online | offline
+ *   <prefix>/clients/<mac>/last_seen  ISO timestamp
+ *   <prefix>/clients/<mac>/ap         AP name
+ *   <prefix>/clients/<mac>/info       JSON: hostname, ip, rssi, iface,
+ *                                          tx_bytes, rx_bytes
+ *
+ * Per AP (retained):
+ *   <prefix>/ap/<name>/status         JSON: online, clients, last_seen, error
+ */
 function publishClientStates(prevClients, currentClients, apStatus) {
   const prefix = getPrefix();
   const now = new Date().toISOString();
@@ -82,8 +95,6 @@ function publishClientStates(prevClients, currentClients, apStatus) {
       iface: c.iface || null,
       tx_bytes: c.tx_bytes != null ? c.tx_bytes : null,
       rx_bytes: c.rx_bytes != null ? c.rx_bytes : null,
-      tx_errors: c.tx_errors != null ? c.tx_errors : null,
-      rx_errors: c.rx_errors != null ? c.rx_errors : null,
     });
   });
 
@@ -108,20 +119,6 @@ function publishClientStates(prevClients, currentClients, apStatus) {
       });
     });
   }
-
-  var meshCount = 0;
-  var regularCount = 0;
-  currentClients.forEach(function (c) {
-    if (c.isMeshNode) meshCount++;
-    else regularCount++;
-  });
-
-  publish(prefix + '/stats', {
-    total_clients: regularCount + meshCount,
-    mesh_nodes: meshCount,
-    regular_clients: regularCount,
-    timestamp: now,
-  });
 }
 
 function isConnected() { return !!(mqttClient && mqttClient.connected); }
