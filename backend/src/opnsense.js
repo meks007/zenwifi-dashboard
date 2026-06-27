@@ -7,9 +7,10 @@ const logger = require('./logger');
 // Internal state - refreshed on every poll cycle
 let leaseMap       = {}; // lowercase MAC -> { ip, hostname, ends, type }
 let reservationMap = {}; // lowercase MAC -> { ip, hostname, description }
+let neighborMap    = {}; // lowercase MAC -> { ip, hostname, interface, lastSeen }
 
 // ---------------------------------------------------------------------------
-// HTTPS helper (leases via REST API)
+// HTTPS helper (leases + neighbor discovery via REST API)
 // ---------------------------------------------------------------------------
 
 const ROWS_PER_PAGE = 500;
@@ -207,6 +208,67 @@ async function fetchReservationsConfigXml(cfg) {
 }
 
 // ---------------------------------------------------------------------------
+// Neighbor discovery (wired clients)
+// ---------------------------------------------------------------------------
+
+const NEIGHBOR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+async function fetchNeighbors(cfg) {
+  var ndCfg = cfg.neighbor_discovery;
+
+  // Feature gate: disabled if the block is absent or enabled !== true
+  if (!ndCfg || ndCfg.enabled !== true) {
+    neighborMap = {};
+    return;
+  }
+
+  var allowedIfaces = new Set(
+    (ndCfg.interfaces && ndCfg.interfaces.length > 0 ? ndCfg.interfaces : ['lan'])
+      .map(function (i) { return i.toLowerCase(); })
+  );
+
+  try {
+    var rows   = await fetchAllRows(cfg, '/api/hostdiscovery/service/search');
+    var now    = Date.now();
+    var newMap = {};
+
+    rows.forEach(function (row) {
+      var iface = (row.interface || row.if || '').toLowerCase();
+      if (!allowedIfaces.has(iface)) return;
+
+      // OPNsense may return a Unix timestamp (seconds) or an ISO date string
+      var lastSeenMs = null;
+      var raw = row.lastseen || row.last_seen || row.lastSeen || null;
+      if (raw !== null && raw !== undefined) {
+        var n = Number(raw);
+        lastSeenMs = isNaN(n) ? new Date(raw).getTime() : n * 1000;
+      }
+      if (lastSeenMs !== null && (now - lastSeenMs) > NEIGHBOR_MAX_AGE_MS) return;
+
+      var mac = (row.mac || '').toLowerCase();
+      if (!mac) return;
+
+      newMap[mac] = {
+        ip:        row.address || row.ip || null,
+        hostname:  row.hostname          || null,
+        interface: iface,
+        lastSeen:  lastSeenMs,
+      };
+    });
+
+    neighborMap = newMap;
+    logger.info(
+      '[OPNsense] Neighbor discovery: ' + Object.keys(neighborMap).length +
+      ' host(s) on interface(s): ' + Array.from(allowedIfaces).join(', ')
+    );
+  } catch (err) {
+    // Graceful degradation: the endpoint requires OPNsense 26.1+
+    logger.warn('[OPNsense] Neighbor discovery fetch failed (requires OPNsense 26.1+): ' + err.message);
+    neighborMap = {};
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Refresh
 // ---------------------------------------------------------------------------
 
@@ -232,9 +294,13 @@ async function refresh(cfg) {
     }
     reservationMap = newReservationMap || {};
 
+    // Neighbor discovery runs in the same cycle but never blocks lease refresh
+    await fetchNeighbors(cfg);
+
     logger.debug(
       '[OPNsense] Refreshed: ' + Object.keys(leaseMap).length + ' lease(s), ' +
-      Object.keys(reservationMap).length + ' reservation(s)'
+      Object.keys(reservationMap).length + ' reservation(s), ' +
+      Object.keys(neighborMap).length + ' neighbor(s)'
     );
   } catch (err) {
     logger.error('[OPNsense] Refresh failed: ' + err.message);
@@ -262,14 +328,62 @@ function getDhcpInfo(mac) {
   };
 }
 
+/**
+ * Returns wired clients from neighbor discovery that are not already present
+ * in the ZenWifi client list. Each entry is enriched with DHCP info if available.
+ *
+ * @param {string[]} knownMacs - MACs of clients already reported by ZenWifi APs.
+ * @returns {object[]}
+ */
+function getWiredClients(knownMacs) {
+  var knownSet = new Set((knownMacs || []).map(function (m) { return m.toLowerCase(); }));
+  var result   = [];
+
+  Object.keys(neighborMap).forEach(function (mac) {
+    if (knownSet.has(mac)) return; // already visible as a Wi-Fi client
+
+    var info = neighborMap[mac];
+    var dhcp = getDhcpInfo(mac) || {};
+
+    result.push({
+      mac:            mac,
+      ip:             dhcp.ip             || info.ip       || null,
+      hostname:       dhcp.hostname       || info.hostname || null,
+      description:    dhcp.description                     || null,
+      interface:      info.interface,
+      lastSeen:       info.lastSeen,
+      hasReservation: dhcp.hasReservation || false,
+    });
+  });
+
+  return result;
+}
+
+/**
+ * Returns true when the neighbor discovery feature is active (enabled in config
+ * and the module has been started). Used by index.js to skip merging entirely
+ * when the feature is off.
+ */
+function isNeighborDiscoveryEnabled(cfg) {
+  return !!(cfg && cfg.neighbor_discovery && cfg.neighbor_discovery.enabled === true);
+}
+
 function startPolling(cfg) {
   if (!cfg || !cfg.host || !cfg.api_key || !cfg.api_secret) {
     logger.warn('[OPNsense] Not configured - DHCP enrichment disabled. Set opnsense.host/api_key/api_secret in config.yaml.');
     return;
   }
   logger.info('[OPNsense] Starting DHCP polling against ' + cfg.host + ' every ' + (cfg.poll_interval || 60) + 's');
+  if (isNeighborDiscoveryEnabled(cfg)) {
+    logger.info(
+      '[OPNsense] Neighbor discovery enabled for interface(s): ' +
+      (cfg.neighbor_discovery.interfaces || ['lan']).join(', ')
+    );
+  } else {
+    logger.info('[OPNsense] Neighbor discovery disabled.');
+  }
   refresh(cfg);
   setInterval(function () { refresh(cfg); }, (cfg.poll_interval || 60) * 1000);
 }
 
-module.exports = { startPolling, getDhcpInfo };
+module.exports = { startPolling, getDhcpInfo, getWiredClients, isNeighborDiscoveryEnabled };
