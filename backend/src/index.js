@@ -9,6 +9,7 @@ const sshModule = require('./ssh');
 const mqttModule = require('./mqtt');
 const logger = require('./logger');
 const ouiModule = require('./oui');
+const opnsense = require('./opnsense');
 
 const app = express();
 app.use(cors());
@@ -71,7 +72,6 @@ function collapseMeshNodes(rawClients) {
     }
 
     const nodeId = c.meshNodeId;
-
     if (!nodeMap.has(nodeId)) {
       nodeMap.set(nodeId, {
         mac: nodeId,
@@ -135,7 +135,6 @@ async function poll() {
     } catch (err) {
       apFailCount[ap.name] = (apFailCount[ap.name] || 0) + 1;
       const failCount = apFailCount[ap.name];
-
       logger.error('[Poll] AP ' + ap.name + ' failed (attempt ' + failCount + '/' + FAILURE_THRESHOLD + '): ' + err.message);
 
       apStatus[ap.name] = {
@@ -168,8 +167,13 @@ async function poll() {
 
   const collapsed = collapseMeshNodes(enriched);
 
+  // Enrich each client with OPNsense DHCP lease and reservation data
+  const dhcpEnriched = collapsed.map(function(c) {
+    return Object.assign({}, c, { dhcp: opnsense.getDhcpInfo(c.mac) });
+  });
+
   const freshClients = new Map();
-  collapsed.forEach(function(c) { freshClients.set(c.mac, c); });
+  dhcpEnriched.forEach(function(c) { freshClients.set(c.mac, c); });
 
   prevClients = currentClients;
   currentClients = freshClients;
@@ -255,6 +259,9 @@ wss.on('connection', function(ws) {
 mqttModule.connect(config, async function(mac) {
   await handleDisconnect(mac.toLowerCase());
 });
+
+// Start OPNsense DHCP polling (no-op with a warning if not configured)
+opnsense.startPolling(config.opnsense);
 
 // Start polling
 const intervalMs = (config.polling_interval_seconds || 30) * 1000;
