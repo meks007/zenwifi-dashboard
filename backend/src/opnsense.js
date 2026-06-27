@@ -73,103 +73,48 @@ async function fetchAllRows(cfg, apiPath) {
 // ---------------------------------------------------------------------------
 // SSH helper for OPNsense
 //
-// Strategy: wrap the command between two unique sentinels so we can reliably
-// extract just the command output regardless of PTY echo, prompt noise, or
-// timing. The shell session sends:
-//
-//   echo __OPN_START__ && <command> && echo __OPN_END__
-//
-// We collect everything between __OPN_START__ and __OPN_END__ as the result.
+// OPNsense sets root's login shell to opnsense-shell (interactive menu).
+// That menu only appears for INTERACTIVE logins with a PTY allocated.
+// conn.exec() does NOT allocate a PTY and does NOT invoke the login shell,
+// so it runs the command directly, bypassing the menu entirely.
+// No sentinels, no echo stripping, no prompt detection needed.
 // ---------------------------------------------------------------------------
-
-var SENTINEL_START = '__OPN_START__';
-var SENTINEL_END   = '__OPN_END__';
-
-function stripAnsi(str) {
-  return str
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-    .replace(/\x1b[^[]/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
-}
 
 function runOPNsenseSSH(cfg, command) {
   return new Promise(function (resolve, reject) {
-    var conn    = new Client();
-    var output  = '';
-    var stage   = 'menu'; // menu -> shell_wait -> cmd_wait -> done
+    var conn = new Client();
 
     var timeout = setTimeout(function () {
       conn.end();
-      reject(new Error('OPNsense SSH timeout'));
+      reject(new Error('OPNsense SSH exec timeout after 30s'));
     }, 30000);
 
     conn.on('ready', function () {
-      logger.debug('[OPNsense SSH] Connection ready, requesting PTY shell');
+      logger.debug('[OPNsense SSH] Connected, running command');
 
-      conn.shell({ term: 'dumb', cols: 220, rows: 24 }, function (err, stream) {
+      conn.exec(command, function (err, stream) {
         if (err) {
           clearTimeout(timeout);
           conn.end();
           return reject(err);
         }
 
-        stream.on('data', function (data) {
-          var chunk = data.toString();
-          output += chunk;
+        var stdout = '';
+        var stderr = '';
 
-          if (stage === 'menu') {
-            if (/Enter an option/i.test(output) || /option.*:/i.test(output)) {
-              stage  = 'shell_wait';
-              output = '';
-              logger.debug('[OPNsense SSH] Menu detected, sending 8');
-              stream.write('8\n');
-            }
-          } else if (stage === 'shell_wait') {
-            // Wait for a shell prompt. Use the accumulated output so
-            // we don't miss prompts split across chunks.
-            if (/[#$%]\s*$/.test(stripAnsi(output).trimEnd())) {
-              stage  = 'cmd_wait';
-              output = '';
-              logger.debug('[OPNsense SSH] Shell ready, running command');
-              // Wrap with sentinels so extraction is unambiguous
-              stream.write(
-                'echo ' + SENTINEL_START + ' && ' +
-                command +
-                ' && echo ' + SENTINEL_END + '\n'
-              );
-            }
-          } else if (stage === 'cmd_wait') {
-            var clean = stripAnsi(output);
-            if (clean.indexOf(SENTINEL_END) !== -1) {
-              // Extract everything between the two sentinels
-              var startIdx = clean.indexOf(SENTINEL_START);
-              var endIdx   = clean.indexOf(SENTINEL_END);
-              var result   = '';
-              if (startIdx !== -1 && endIdx > startIdx) {
-                result = clean
-                  .slice(startIdx + SENTINEL_START.length, endIdx)
-                  .replace(/\r/g, '')
-                  .trim();
-              }
+        stream.on('data', function (data) { stdout += data.toString(); });
+        stream.stderr.on('data', function (data) { stderr += data.toString(); });
 
-              stage = 'done';
-              clearTimeout(timeout);
-              conn.end();
-              resolve(result);
-            }
-          }
-        });
-
-        stream.stderr.on('data', function (d) {
-          logger.debug('[OPNsense SSH] stderr: ' + d.toString().trim());
-        });
-
-        stream.on('close', function () {
+        stream.on('close', function (code) {
           clearTimeout(timeout);
-          if (stage !== 'done') {
-            conn.end();
-            reject(new Error('OPNsense SSH stream closed before command completed (stage: ' + stage + ')'));
+          conn.end();
+          if (stderr.trim()) {
+            logger.debug('[OPNsense SSH] stderr: ' + stderr.trim());
           }
+          if (code !== 0) {
+            return reject(new Error('OPNsense SSH command exited with code ' + code + ': ' + stderr.trim()));
+          }
+          resolve(stdout);
         });
       });
     });
