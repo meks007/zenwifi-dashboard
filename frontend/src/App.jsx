@@ -5,7 +5,8 @@ import LogView from './components/LogView.jsx';
 
 const WS_URL = 'ws://' + window.location.host + '/ws';
 const RECONNECT_DELAY_MS = 3000;
-const MAX_LOG_ENTRIES = 500;
+
+const MAX_LOG_ENTRIES = 50000;
 
 export default function App() {
   const [clients, setClients] = useState([]);
@@ -90,9 +91,11 @@ export default function App() {
     wsRef.current.send(JSON.stringify({ type: 'disconnect', mac: mac }));
   }, []);
 
+  const errorCount = logs.filter(function(l) { return l.level === 'error'; }).length;
+
   const tabs = [
     { id: 'clients', label: 'Clients (' + clients.length + ')' },
-    { id: 'logs', label: 'Logs' + (logs.filter(function(l) { return l.level === 'error'; }).length > 0 ? ' (' + logs.filter(function(l) { return l.level === 'error'; }).length + ' errors)' : '') },
+    { id: 'logs', label: 'Logs' + (errorCount > 0 ? ' (' + errorCount + ' errors)' : '') },
   ];
 
   return (
