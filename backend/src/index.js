@@ -9,6 +9,7 @@ const sshModule = require('./ssh');
 const mqttModule = require('./mqtt');
 const logger = require('./logger');
 const ouiModule = require('./oui');
+const opnsense = require('./opnsense');
 
 const app = express();
 app.use(cors());
@@ -71,7 +72,6 @@ function collapseMeshNodes(rawClients) {
     }
 
     const nodeId = c.meshNodeId;
-
     if (!nodeMap.has(nodeId)) {
       nodeMap.set(nodeId, {
         mac: nodeId,
@@ -171,8 +171,21 @@ async function poll() {
 
   const collapsed = collapseMeshNodes(enriched);
 
+  // Enrich each client with OPNsense DHCP lease and reservation data.
+  // For non-mesh clients, promote dhcp.hostname and dhcp.ip to the top-level
+  // fields so the frontend can display them without reading into dhcp.*.
+  // Priority: reservation > dynamic lease > WiFi-side ARP/clientlist value.
+  const dhcpEnriched = collapsed.map(function(c) {
+    var dhcp = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
+    return Object.assign({}, c, {
+      dhcp:     dhcp,
+      ip:       (!c.isMeshNode && dhcp && dhcp.ip)       ? dhcp.ip       : (c.ip       || null),
+      hostname: (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
+    });
+  });
+
   const freshClients = new Map();
-  collapsed.forEach(function(c) { freshClients.set(c.mac, c); });
+  dhcpEnriched.forEach(function(c) { freshClients.set(c.mac, c); });
 
   prevClients = currentClients;
   currentClients = freshClients;
@@ -238,6 +251,9 @@ const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 
 mqttModule.connect(config, handleDisconnect);
+
+// Start OPNsense DHCP polling (no-op with a warning if not configured)
+opnsense.startPolling(config.opnsense);
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
