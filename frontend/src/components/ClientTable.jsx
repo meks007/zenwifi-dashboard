@@ -1,13 +1,15 @@
 import { useState } from 'react';
 
 const COLUMNS = [
-  { key: 'mac', label: 'MAC Address' },
-  { key: 'vendor', label: 'Vendor' },
+  { key: 'mac',      label: 'MAC Address' },
+  { key: 'vendor',   label: 'Vendor' },
   { key: 'hostname', label: 'Hostname' },
-  { key: 'ip', label: 'IP Address' },
-  { key: 'apName', label: 'Access Point' },
-  { key: 'iface', label: 'Interface' },
-  { key: 'rssi', label: 'RSSI (dBm)' },
+  { key: 'ip',       label: 'IP Address' },
+  { key: 'apName',   label: 'Access Point' },
+  { key: 'iface',    label: 'Interface' },
+  { key: 'rssi',     label: 'RSSI (dBm)' },
+  { key: 'tx_bytes', label: 'TX' },
+  { key: 'rx_bytes', label: 'RX' },
 ];
 
 function rssiColor(rssi) {
@@ -15,6 +17,16 @@ function rssiColor(rssi) {
   if (rssi >= -60) return 'text-green-400';
   if (rssi >= -75) return 'text-yellow-400';
   return 'text-red-400';
+}
+
+function fmtBytes(val) {
+  if (val === null || val === undefined) return null;
+  const n = Number(val);
+  if (isNaN(n)) return null;
+  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+  if (n >= 1048576)    return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024)       return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
 }
 
 function VendorCell({ client }) {
@@ -63,7 +75,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  function sortArrow(key) {
+  function sortMark(key) {
     if (sortKey !== key) return '';
     return sortDir === 'asc' ? ' (asc)' : ' (desc)';
   }
@@ -92,7 +104,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     onClick={function() { toggleSort(col.key); }}
                     className="px-4 py-2 text-left cursor-pointer select-none hover:text-gray-300 transition-colors whitespace-nowrap"
                   >
-                    {col.label}{sortArrow(col.key)}
+                    {col.label}{sortMark(col.key)}
                   </th>
                 );
               })}
@@ -109,6 +121,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             )}
             {sorted.map(function(c) {
               const isKicking = !!disconnecting[c.mac];
+              const txFmt = fmtBytes(c.tx_bytes);
+              const rxFmt = fmtBytes(c.rx_bytes);
               return (
                 <tr
                   key={c.mac}
@@ -125,13 +139,19 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{c.ip || <span className="text-gray-600">n/a</span>}</td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs text-gray-300">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
+                      <span className={'w-1.5 h-1.5 rounded-full inline-block ' + (c.isMeshNode ? 'bg-indigo-400' : 'bg-green-400')}></span>
                       {c.apName}
                     </span>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{c.iface || 'n/a'}</td>
                   <td className={'px-4 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
-                    {c.rssi != null ? c.rssi : 'n/a'}
+                    {c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400">
+                    {txFmt !== null ? txFmt : <span className="text-gray-600">n/a</span>}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400">
+                    {rxFmt !== null ? rxFmt : <span className="text-gray-600">n/a</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {c.isMeshNode ? (
