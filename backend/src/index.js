@@ -9,7 +9,6 @@ const sshModule = require('./ssh');
 const mqttModule = require('./mqtt');
 const logger = require('./logger');
 const ouiModule = require('./oui');
-const opnsense = require('./opnsense');
 
 const app = express();
 app.use(cors());
@@ -72,6 +71,7 @@ function collapseMeshNodes(rawClients) {
     }
 
     const nodeId = c.meshNodeId;
+
     if (!nodeMap.has(nodeId)) {
       nodeMap.set(nodeId, {
         mac: nodeId,
@@ -106,6 +106,7 @@ async function poll() {
 
   let clientlistMap = null;
   let meshMap = new Map();
+  let neighMap = {};
 
   if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
@@ -113,13 +114,16 @@ async function poll() {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     }
     meshMap = await sshModule.fetchMeshNodeMacs(masterAp);
+    // Fetch ip neigh from master only. Satellites have incomplete neigh tables
+    // and would resolve the wrong IP for other nodes' management addresses.
+    neighMap = await sshModule.fetchNeighMap(masterAp);
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
 
   await Promise.allSettled(aps.map(async function(ap) {
     try {
-      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap);
+      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap);
 
       // Success: reset failure counter, accept results
       apFailCount[ap.name] = 0;
@@ -134,6 +138,7 @@ async function poll() {
     } catch (err) {
       apFailCount[ap.name] = (apFailCount[ap.name] || 0) + 1;
       const failCount = apFailCount[ap.name];
+
       logger.error('[Poll] AP ' + ap.name + ' failed (attempt ' + failCount + '/' + FAILURE_THRESHOLD + '): ' + err.message);
 
       apStatus[ap.name] = {
@@ -166,20 +171,8 @@ async function poll() {
 
   const collapsed = collapseMeshNodes(enriched);
 
-  // Enrich each client with OPNsense DHCP lease and reservation data.
-  // For non-mesh clients, promote dhcp.hostname and dhcp.ip to the top-level
-  // fields so the frontend can display them without reading into dhcp.*.
-  const dhcpEnriched = collapsed.map(function(c) {
-    var dhcp = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
-    return Object.assign({}, c, {
-      dhcp:     dhcp,
-      ip:       (!c.isMeshNode && dhcp && dhcp.ip)       ? dhcp.ip       : (c.ip       || null),
-      hostname: (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
-    });
-  });
-
   const freshClients = new Map();
-  dhcpEnriched.forEach(function(c) { freshClients.set(c.mac, c); });
+  collapsed.forEach(function(c) { freshClients.set(c.mac, c); });
 
   prevClients = currentClients;
   currentClients = freshClients;
@@ -200,44 +193,32 @@ async function handleDisconnect(mac) {
   const ap = aps.find(function(a) { return a.name === c.apName; });
   if (!ap) return { success: false, error: 'AP not found' };
   try {
-    await sshModule.disconnectClient(ap, mac);
-    logger.info('[Disconnect] Successfully kicked ' + mac + ' from ' + ap.name);
-    setTimeout(poll, 2000);
-    return { success: true };
+    const kicked = await sshModule.disconnectClient(ap, mac);
+    if (kicked) {
+      logger.info('[Disconnect] Successfully disconnected ' + mac + ' from ' + ap.name);
+      return { success: true };
+    } else {
+      logger.warn('[Disconnect] No interface reported success for ' + mac);
+      return { success: false, error: 'Deauth command sent but no interface confirmed success' };
+    }
   } catch (err) {
-    logger.error('[Disconnect] Failed to kick ' + mac + ': ' + err.message);
+    logger.error('[Disconnect] Error disconnecting ' + mac + ': ' + err.message);
     return { success: false, error: err.message };
   }
 }
 
-// REST endpoints
-app.get('/api/clients', function(_req, res) {
-  res.json({
-    clients: Array.from(currentClients.values()),
-    apStatus: apStatus,
-    mqttConnected: mqttModule.isConnected(),
-    timestamp: new Date().toISOString(),
-  });
-});
-
-app.post('/api/clients/:mac/disconnect', async function(req, res) {
-  const mac = req.params.mac.toLowerCase();
+// REST: POST /api/disconnect { mac }
+app.post('/api/disconnect', async function(req, res) {
+  const mac = (req.body.mac || '').toLowerCase().trim();
+  if (!mac) return res.status(400).json({ success: false, error: 'mac required' });
   const result = await handleDisconnect(mac);
   res.status(result.success ? 200 : 400).json(result);
 });
 
-app.get('/api/logs', function(_req, res) {
-  res.json({ logs: logger.list() });
-});
-
-app.get('/api/health', function(_req, res) {
-  res.json({ ok: true, uptime: process.uptime() });
-});
-
-// WebSocket
+// WebSocket connection handler
 wss.on('connection', function(ws) {
-  logger.info('[WS] Browser client connected');
-
+  logger.debug('[WS] Client connected');
+  // Send current state immediately on connect
   ws.send(JSON.stringify({
     type: 'clients',
     clients: Array.from(currentClients.values()),
@@ -245,42 +226,24 @@ wss.on('connection', function(ws) {
     mqttConnected: mqttModule.isConnected(),
     timestamp: new Date().toISOString(),
   }));
-
-  ws.send(JSON.stringify({ type: 'log_history', logs: logger.list() }));
-
-  ws.on('message', async function(raw) {
-    try {
-      const msg = JSON.parse(raw.toString());
-      if (msg.type === 'disconnect' && msg.mac) {
-        const result = await handleDisconnect(msg.mac.toLowerCase());
-        ws.send(JSON.stringify(Object.assign({ type: 'disconnect_result', mac: msg.mac }, result)));
-      }
-    } catch (_e) {}
-  });
-
-  ws.on('close', function() { logger.info('[WS] Browser client disconnected'); });
+  // Send log history
+  ws.send(JSON.stringify({
+    type: 'log_history',
+    entries: logger.getHistory(),
+  }));
+  ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
 
-// MQTT disconnect requests also flow through handleDisconnect (guards mesh nodes)
-mqttModule.connect(config, async function(mac) {
-  await handleDisconnect(mac.toLowerCase());
-});
+const pollInterval = (config.polling_interval_seconds || 30) * 1000;
+logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 
-// Start OPNsense DHCP polling (no-op with a warning if not configured)
-opnsense.startPolling(config.opnsense);
-
-// Start polling
-const intervalMs = (config.polling_interval_seconds || 30) * 1000;
-logger.info('[Server] Starting. Polling every ' + (config.polling_interval_seconds || 30) + 's');
-logger.info('[Server] Log buffer size: ' + (config.log_buffer_size || 500) + ' lines');
-logger.info('[Server] AP failure threshold before client clear: ' + FAILURE_THRESHOLD);
-logger.info('[Server] APs: ' + aps.map(function(a) { return a.name + (a.master ? ' (master)' : ''); }).join(', '));
-logger.info('[Server] Master AP: ' + (masterAp ? masterAp.name : 'none configured'));
-logger.info('[Server] Debug logging: ' + (config.debug_logging ? 'ON' : 'OFF'));
-poll();
-setInterval(poll, intervalMs);
+mqttModule.connect(config, handleDisconnect);
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
   logger.info('[Server] Listening on port ' + PORT);
+  logger.info('[Server] APs: ' + aps.map(function(a) { return a.name + (a.master ? ' (master)' : ''); }).join(', '));
+  logger.info('[Server] Master AP: ' + (masterAp ? masterAp.name : 'none configured'));
+  poll();
+  setInterval(poll, pollInterval);
 });
