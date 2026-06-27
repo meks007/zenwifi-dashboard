@@ -15,10 +15,14 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server: server });
 
-// Wire logger to broadcast log entries to all connected WS clients
+// Wire logger broadcaster BEFORE config load so early log lines are captured
 logger.setBroadcaster(function(payload) { broadcast(payload); });
 
 const config = configModule.loadConfig();
+
+// Apply debug setting from config (debug_logging: true/false)
+logger.setDebug(!!config.debug_logging);
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
@@ -37,12 +41,6 @@ function broadcastState() {
     apStatus: apStatus,
     mqttConnected: mqttModule.isConnected(),
     timestamp: new Date().toISOString(),
-  });
-}
-
-function enrichWithVendor(clients) {
-  return clients.map(function(c) {
-    return Object.assign({}, c, { vendor: ouiModule.lookup(c.mac) });
   });
 }
 
@@ -120,7 +118,6 @@ app.get('/api/health', function(_req, res) {
 wss.on('connection', function(ws) {
   logger.info('[WS] Browser client connected');
 
-  // Send current state immediately
   ws.send(JSON.stringify({
     type: 'clients',
     clients: Array.from(currentClients.values()),
@@ -129,7 +126,6 @@ wss.on('connection', function(ws) {
     timestamp: new Date().toISOString(),
   }));
 
-  // Send buffered logs immediately so new client sees history
   ws.send(JSON.stringify({ type: 'log_history', logs: logger.list() }));
 
   ws.on('message', async function(raw) {
@@ -154,7 +150,7 @@ mqttModule.connect(config, async function(mac) {
 const intervalMs = (config.polling_interval_seconds || 10) * 1000;
 logger.info('[Server] Starting. Polling every ' + config.polling_interval_seconds + 's');
 logger.info('[Server] APs: ' + (config.access_points || []).map(function(a) { return a.name; }).join(', '));
-logger.info('[Server] Debug logging: ' + (process.env.DEBUG_LOGGING === '1' ? 'ON' : 'OFF (set DEBUG_LOGGING=1 to enable)'));
+logger.info('[Server] Debug logging: ' + (config.debug_logging ? 'ON' : 'OFF'));
 poll();
 setInterval(poll, intervalMs);
 
