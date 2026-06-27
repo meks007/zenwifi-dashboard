@@ -72,18 +72,36 @@ async function fetchAllRows(cfg, apiPath) {
 
 // ---------------------------------------------------------------------------
 // SSH helper for OPNsense
+//
+// Strategy: wrap the command between two unique sentinels so we can reliably
+// extract just the command output regardless of PTY echo, prompt noise, or
+// timing. The shell session sends:
+//
+//   echo __OPN_START__ && <command> && echo __OPN_END__
+//
+// We collect everything between __OPN_START__ and __OPN_END__ as the result.
 // ---------------------------------------------------------------------------
+
+var SENTINEL_START = '__OPN_START__';
+var SENTINEL_END   = '__OPN_END__';
+
+function stripAnsi(str) {
+  return str
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1b[^[]/g, '')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
 
 function runOPNsenseSSH(cfg, command) {
   return new Promise(function (resolve, reject) {
     var conn    = new Client();
     var output  = '';
-    var stage   = 'menu'; // states: menu -> shell_wait -> cmd_wait -> done
+    var stage   = 'menu'; // menu -> shell_wait -> cmd_wait -> done
 
     var timeout = setTimeout(function () {
       conn.end();
       reject(new Error('OPNsense SSH timeout'));
-    }, 20000);
+    }, 30000);
 
     conn.on('ready', function () {
       logger.debug('[OPNsense SSH] Connection ready, requesting PTY shell');
@@ -100,30 +118,44 @@ function runOPNsenseSSH(cfg, command) {
           output += chunk;
 
           if (stage === 'menu') {
-            if (/Enter an option/i.test(chunk) || /option.*:/i.test(chunk)) {
-              stage = 'shell_wait';
+            if (/Enter an option/i.test(output) || /option.*:/i.test(output)) {
+              stage  = 'shell_wait';
+              output = '';
               logger.debug('[OPNsense SSH] Menu detected, sending 8');
               stream.write('8\n');
             }
           } else if (stage === 'shell_wait') {
-            if (/[#$%]\s*$/.test(chunk.trim())) {
+            // Wait for a shell prompt. Use the accumulated output so
+            // we don't miss prompts split across chunks.
+            if (/[#$%]\s*$/.test(stripAnsi(output).trimEnd())) {
               stage  = 'cmd_wait';
               output = '';
               logger.debug('[OPNsense SSH] Shell ready, running command');
-              stream.write(command + '; echo __OPNSENSE_DONE__\n');
+              // Wrap with sentinels so extraction is unambiguous
+              stream.write(
+                'echo ' + SENTINEL_START + ' && ' +
+                command +
+                ' && echo ' + SENTINEL_END + '\n'
+              );
             }
           } else if (stage === 'cmd_wait') {
-            if (output.indexOf('__OPNSENSE_DONE__') !== -1) {
-              var raw = output
-                .replace(/\r/g, '')
-                .split('__OPNSENSE_DONE__')[0]
-                .replace(/^[^\n]*\n/, '') // strip echoed command line
-                .trim();
+            var clean = stripAnsi(output);
+            if (clean.indexOf(SENTINEL_END) !== -1) {
+              // Extract everything between the two sentinels
+              var startIdx = clean.indexOf(SENTINEL_START);
+              var endIdx   = clean.indexOf(SENTINEL_END);
+              var result   = '';
+              if (startIdx !== -1 && endIdx > startIdx) {
+                result = clean
+                  .slice(startIdx + SENTINEL_START.length, endIdx)
+                  .replace(/\r/g, '')
+                  .trim();
+              }
 
               stage = 'done';
               clearTimeout(timeout);
               conn.end();
-              resolve(raw);
+              resolve(result);
             }
           }
         });
@@ -189,31 +221,17 @@ async function fetchReservationsKea(cfg) {
   }
 }
 
-/**
- * Strip ANSI escape sequences and other terminal control codes that a PTY
- * session may inject into the output stream.
- */
-function stripAnsi(str) {
-  // ESC [ ... m  (SGR), ESC [ ... H/A/B/C/D/J/K (cursor), and bare ESC sequences
-  return str
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-    .replace(/\x1b[^[]/g, '')
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, ''); // control chars except \t \n
-}
-
 async function fetchReservationsConfigXml(cfg) {
   try {
     logger.info('[OPNsense SSH] Connecting to ' + (cfg.ssh_host || cfg.host) + ' to read config.xml');
-    var raw     = await runOPNsenseSSH(cfg, 'cat /conf/config.xml');
-    var cleaned = stripAnsi(raw);
+    var xmlText = await runOPNsenseSSH(cfg, 'cat /conf/config.xml');
 
-    // Debug: log a short window around the first <staticmap> occurrence
-    var probe = cleaned.indexOf('<staticmap>');
+    var probe = xmlText.indexOf('<staticmap>');
     if (probe === -1) {
-      logger.warn('[OPNsense] No <staticmap> found in received config.xml (' + cleaned.length + ' chars)');
-      logger.debug('[OPNsense] config.xml head: ' + cleaned.slice(0, 300).replace(/\n/g, ' '));
+      logger.warn('[OPNsense] No <staticmap> found in received config.xml (' + xmlText.length + ' chars)');
+      logger.debug('[OPNsense] config.xml head: ' + xmlText.slice(0, 300).replace(/\n/g, ' '));
     } else {
-      logger.debug('[OPNsense] First <staticmap> at char ' + probe + ' of ' + cleaned.length);
+      logger.debug('[OPNsense] First <staticmap> at char ' + probe + ' of ' + xmlText.length);
     }
 
     var map     = {};
@@ -224,7 +242,7 @@ async function fetchReservationsConfigXml(cfg) {
     };
 
     var block;
-    while ((block = blockRe.exec(cleaned)) !== null) {
+    while ((block = blockRe.exec(xmlText)) !== null) {
       var inner = block[1];
       var mac   = (tagRe('mac', inner) || '').toLowerCase();
       if (!mac) continue;
