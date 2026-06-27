@@ -72,9 +72,9 @@ opnsense:
   # --- REST API (leases) ---
   host: 192.168.x.x        # OPNsense IP or hostname
   port: 443                 # HTTPS port (default: 443)
-  apiKey: your-api-key
-  apiSecret: your-api-secret
-  verifySsl: false          # Set to true if OPNsense has a valid/trusted TLS cert
+  api_key: your-api-key
+  api_secret: your-api-secret
+  verify_ssl: false         # Set to true if OPNsense has a valid/trusted TLS cert
 
   # --- SSH (static reservations via /conf/config.xml) ---
   ssh_host: 192.168.x.x    # defaults to 'host' above if omitted
