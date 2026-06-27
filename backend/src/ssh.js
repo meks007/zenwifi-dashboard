@@ -131,11 +131,11 @@ async function getRssiBroadcom(ap, iface, mac) {
 
 /**
  * Fetch per-client TX/RX byte counters via "wl -i <iface> sta_info <mac>".
- * Returns { tx_bytes, rx_bytes } or nulls if unsupported / parse fails.
+ * Uses unicast byte counters to avoid inflated totals from mcast/bcast traffic.
  *
- * Relevant lines in sta_info output look like:
- *   tx total bytes         12345678
- *   rx total bytes         87654321
+ * Relevant lines in sta_info output:
+ *   tx ucast bytes         827053914
+ *   rx ucast bytes         1028377000
  */
 async function getStatsBroadcom(ap, iface, mac) {
   try {
@@ -144,12 +144,12 @@ async function getStatsBroadcom(ap, iface, mac) {
     var rx = null;
     out.split('\n').forEach(function (line) {
       var l = line.trim().toLowerCase();
-      if (l.indexOf('tx total bytes') !== -1) {
+      if (l.indexOf('tx ucast bytes') !== -1) {
         var parts = l.split(new RegExp('\\s+'));
         var val = parseInt(parts[parts.length - 1], 10);
         if (!isNaN(val)) tx = val;
       }
-      if (l.indexOf('rx total bytes') !== -1) {
+      if (l.indexOf('rx ucast bytes') !== -1) {
         var parts2 = l.split(new RegExp('\\s+'));
         var val2 = parseInt(parts2[parts2.length - 1], 10);
         if (!isNaN(val2)) rx = val2;
@@ -206,33 +206,38 @@ async function getAssoclistAtheros(ap, iface) {
 }
 
 /**
- * Fetch per-client TX/RX byte counters for Atheros via
- * "wlanconfig <iface> list sta" extended output.
+ * Fetch per-client TX/RX byte counters for Atheros via hostapd_cli.
  *
- * wlanconfig extended output columns (space-separated) when available:
- *   ADDR  AID  CHAN  TXRATE  RXRATE  RSSI  MINRSSI  MAXRSSI  IDLE  TXSEQ  RXSEQ
- *   CAPS  ACAPS  ERP  STATE  MAXRATE  HTCAPS  ASSOCTIME  IEs  PSMODE
- *   RXTIME  TXTIME  RXBYTES  TXBYTES
- * Column indices (0-based) if present: RXBYTES=22, TXBYTES=23
+ * "hostapd_cli -i <iface> all_sta" returns one block per client separated
+ * by blank lines. Each block starts with the client MAC on its own line,
+ * followed by key=value pairs including rx_bytes and tx_bytes.
  *
- * Falls back to nulls if the firmware does not expose extended stats.
+ * Returns nulls if hostapd_cli is unavailable or the MAC is not found.
  */
 async function getStatsAtheros(ap, iface, mac) {
   try {
-    var out = await runSSH(ap, 'wlanconfig ' + iface + ' list sta 2>/dev/null || echo ""');
+    var out = await runSSH(ap, 'hostapd_cli -i ' + iface + ' all_sta 2>/dev/null || echo ""');
     var tx = null;
     var rx = null;
-    out.split('\n').forEach(function (line) {
-      var parts = line.trim().split(new RegExp('\\s+'));
-      if (parts.length < 2) return;
-      if (parts[0].toLowerCase() !== mac) return;
-      if (parts.length >= 24) {
-        var rxVal = parseInt(parts[22], 10);
-        var txVal = parseInt(parts[23], 10);
-        if (!isNaN(rxVal)) rx = rxVal;
-        if (!isNaN(txVal)) tx = txVal;
+    var blocks = out.split('\n\n');
+    for (var i = 0; i < blocks.length; i++) {
+      var block = blocks[i].trim();
+      if (!block) continue;
+      var lines = block.split('\n');
+      if (lines[0].trim().toLowerCase() !== mac) continue;
+      for (var j = 1; j < lines.length; j++) {
+        var line = lines[j].trim();
+        if (line.indexOf('tx_bytes=') === 0) {
+          var val = parseInt(line.split('=')[1], 10);
+          if (!isNaN(val)) tx = val;
+        }
+        if (line.indexOf('rx_bytes=') === 0) {
+          var val2 = parseInt(line.split('=')[1], 10);
+          if (!isNaN(val2)) rx = val2;
+        }
       }
-    });
+      break;
+    }
     return { tx_bytes: tx, rx_bytes: rx };
   } catch (_) {
     return { tx_bytes: null, rx_bytes: null };
