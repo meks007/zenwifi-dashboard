@@ -86,6 +86,9 @@ Open http://localhost:3000 in your browser.
 `config.yaml` (copy from `config.example.yaml`):
 
 ```yaml
+# Zenwifi Dashboard Configuration Example
+# Copy this file to config.yaml and adjust to your environment.
+
 mqtt:
   host: 192.168.1.10
   port: 1883
@@ -93,30 +96,82 @@ mqtt:
   password: mypassword
   topic_prefix: zenwifi
 
+# How often (in seconds) to poll all access points for connected clients.
+# Polling involves multiple SSH commands per AP, so keep this sane (>=30 recommended).
 polling_interval_seconds: 30
+
+# Size of the in-memory log ring buffer (number of log lines kept).
+# Older entries are dropped when the buffer is full. Default: 500.
 log_buffer_size: 500
+
+# Set to true to log every SSH command and its output (very verbose).
 debug_logging: false
 
 access_points:
+  # Mark exactly one AP as master: true. The master node maintains
+  # /tmp/clientlist.json which is the primary source for client IPs and
+  # RSSI values across all nodes. On ASUS AiMesh, this is the main router.
   - name: "Living Room"
     host: 192.168.1.1
     ssh_port: 22
     username: admin
     password: secret
     master: true
-    # driver: broadcom  # optional override: broadcom | atheros
+    # driver: broadcom  # optional override; auto-detected if omitted
 
   - name: "Office"
     host: 192.168.1.2
     ssh_port: 22
     username: admin
     password: secret
+    # driver: broadcom
 
+  # Example: Atheros-based node (e.g. ZenWifi AC Mini with stock ASUS firmware)
+  # Driver is auto-detected via SSH probe; override only if detection fails.
   - name: "Bedroom"
     host: 192.168.1.3
     ssh_port: 22
     username: admin
     password: secret
+    # driver: atheros
+
+# ---------------------------------------------------------------------------
+# OPNsense DHCP integration (optional)
+# ---------------------------------------------------------------------------
+# When configured, the backend queries OPNsense for:
+# - Dynamic leases : via REST API -> client.dhcp.ip / hostname / leaseEnds
+# - Static mappings : via SSH -> client.dhcp.description / hasReservation
+#
+# OPNsense is a separate box with its own IP and credentials.
+#
+# REST API credentials:
+# System -> Access -> Users -> -> API keys
+# Required privilege: DHCP: Leases (read-only is sufficient)
+#
+# SSH credentials (same field names as access_points for consistency):
+# System -> Settings -> Administration -> Secure Shell -> enable SSH
+# Must connect as root.
+# ssh_host defaults to the value of 'host' above if omitted.
+#
+# Remove this block or leave host empty to disable DHCP enrichment entirely.
+# ---------------------------------------------------------------------------
+opnsense:
+  # --- REST API (leases) ---
+  host: 192.168.x.x  # OPNsense IP or hostname
+  port: 443          # HTTPS port (default: 443)
+  api_key: your-api-key
+  api_secret: your-api-secret
+  verify_ssl: false  # Set to true if OPNsense has a valid/trusted TLS cert
+
+  # --- SSH (static reservations via /conf/config.xml) ---
+  ssh_host: 192.168.x.x  # defaults to 'host' above if omitted
+  ssh_port: 22
+  username: root
+  password: your-root-password
+  # key_path: /run/secrets/opnsense_id_rsa  # path to private key (alternative to password)
+
+  # --- Polling ---
+  poll_interval: 60  # How often (seconds) to refresh DHCP data
 ```
 
 ### Config reference
