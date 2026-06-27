@@ -131,7 +131,6 @@ async function poll() {
         lastSeen: new Date().toISOString(),
         error: null,
       };
-
     } catch (err) {
       apFailCount[ap.name] = (apFailCount[ap.name] || 0) + 1;
       const failCount = apFailCount[ap.name];
@@ -167,9 +166,16 @@ async function poll() {
 
   const collapsed = collapseMeshNodes(enriched);
 
-  // Enrich each client with OPNsense DHCP lease and reservation data
+  // Enrich each client with OPNsense DHCP lease and reservation data.
+  // For non-mesh clients, promote dhcp.hostname and dhcp.ip to the top-level
+  // fields so the frontend can display them without reading into dhcp.*.
   const dhcpEnriched = collapsed.map(function(c) {
-    return Object.assign({}, c, { dhcp: opnsense.getDhcpInfo(c.mac) });
+    var dhcp = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
+    return Object.assign({}, c, {
+      dhcp:     dhcp,
+      ip:       (!c.isMeshNode && dhcp && dhcp.ip)       ? dhcp.ip       : (c.ip       || null),
+      hostname: (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
+    });
   });
 
   const freshClients = new Map();
