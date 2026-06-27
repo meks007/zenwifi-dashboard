@@ -1,3 +1,5 @@
+'use strict';
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
@@ -46,31 +48,82 @@ function broadcastState() {
   });
 }
 
-async function poll() {
-  const freshClients = new Map();
+/**
+ * Collapse raw client entries that share a meshNodeId into a single row per
+ * physical mesh node.
+ *
+ * The canonical entry for a node uses the nodeId as its mac, carries the
+ * best RSSI seen across all active backhaul links, and records the full list
+ * of active backhaul MACs in meshActiveMacs for display purposes.
+ *
+ * Regular (non-mesh) clients are passed through unchanged.
+ */
+function collapseMeshNodes(rawClients) {
+  const regular = [];
+  // nodeId -> accumulated node entry
+  const nodeMap = new Map();
 
-  // Fetch clientlist.json and mesh node MACs from master once per poll cycle
+  rawClients.forEach(function(c) {
+    if (!c.isMeshNode) {
+      regular.push(c);
+      return;
+    }
+
+    const nodeId = c.meshNodeId;
+
+    if (!nodeMap.has(nodeId)) {
+      nodeMap.set(nodeId, {
+        mac: nodeId,
+        ip: c.ip,
+        hostname: null,
+        rssi: c.rssi,
+        iface: c.iface,
+        apName: c.apName,
+        apHost: c.apHost,
+        isMeshNode: true,
+        meshNodeId: nodeId,
+        meshActiveMacs: [c.mac],
+        vendor: ouiModule.lookup(nodeId),
+      });
+    } else {
+      const existing = nodeMap.get(nodeId);
+      // Keep best (highest) RSSI
+      if (c.rssi !== null && (existing.rssi === null || c.rssi > existing.rssi)) {
+        existing.rssi = c.rssi;
+      }
+      // Fill in IP if not yet known
+      if (!existing.ip && c.ip) existing.ip = c.ip;
+      // Track all active backhaul MACs
+      if (!existing.meshActiveMacs.includes(c.mac)) {
+        existing.meshActiveMacs.push(c.mac);
+      }
+    }
+  });
+
+  return regular.concat(Array.from(nodeMap.values()));
+}
+
+async function poll() {
+  const allRawClients = [];
+
+  // Fetch clientlist.json and meshMap from master once per poll cycle
   let clientlistMap = null;
-  let meshMacs = new Set();
+  let meshMap = new Map();
 
   if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     }
-    meshMacs = await sshModule.fetchMeshNodeMacs(masterAp);
+    meshMap = await sshModule.fetchMeshNodeMacs(masterAp);
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
 
   await Promise.allSettled(aps.map(async function(ap) {
     try {
-      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMacs);
-      clients.forEach(function(c) {
-        freshClients.set(c.mac, Object.assign({}, c, {
-          vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac),
-        }));
-      });
+      const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap);
+      clients.forEach(function(c) { allRawClients.push(c); });
       apStatus[ap.name] = { online: true, lastSeen: new Date().toISOString(), error: null };
     } catch (err) {
       logger.error('[Poll] AP ' + ap.name + ' failed: ' + err.message);
@@ -81,6 +134,18 @@ async function poll() {
       };
     }
   }));
+
+  // Attach vendor to regular clients, then collapse mesh nodes to one row each
+  const enriched = allRawClients.map(function(c) {
+    return Object.assign({}, c, {
+      vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac),
+    });
+  });
+
+  const collapsed = collapseMeshNodes(enriched);
+
+  const freshClients = new Map();
+  collapsed.forEach(function(c) { freshClients.set(c.mac, c); });
 
   prevClients = currentClients;
   currentClients = freshClients;
@@ -162,7 +227,7 @@ wss.on('connection', function(ws) {
   ws.on('close', function() { logger.info('[WS] Browser client disconnected'); });
 });
 
-// MQTT disconnect requests also go through handleDisconnect which guards mesh nodes
+// MQTT disconnect requests also flow through handleDisconnect (guards mesh nodes)
 mqttModule.connect(config, async function(mac) {
   await handleDisconnect(mac.toLowerCase());
 });
