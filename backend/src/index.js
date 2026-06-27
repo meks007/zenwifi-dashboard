@@ -27,9 +27,17 @@ logger.setMaxLines(config.log_buffer_size || 500);
 const aps = config.access_points || [];
 const masterAp = aps.find(function(ap) { return ap.master === true; }) || null;
 
+// How many consecutive poll failures before an AP's clients are cleared.
+const FAILURE_THRESHOLD = 3;
+
 let currentClients = new Map();
 let prevClients = new Map();
 let apStatus = {};
+
+// Track consecutive SSH failures per AP name.
+// Cleared to 0 on any successful poll.
+const apFailCount = {};
+aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
@@ -51,16 +59,9 @@ function broadcastState() {
 /**
  * Collapse raw client entries that share a meshNodeId into a single row per
  * physical mesh node.
- *
- * The canonical entry for a node uses the nodeId as its mac, carries the
- * best RSSI seen across all active backhaul links, and records the full list
- * of active backhaul MACs in meshActiveMacs for display purposes.
- *
- * Regular (non-mesh) clients are passed through unchanged.
  */
 function collapseMeshNodes(rawClients) {
   const regular = [];
-  // nodeId -> accumulated node entry
   const nodeMap = new Map();
 
   rawClients.forEach(function(c) {
@@ -87,13 +88,10 @@ function collapseMeshNodes(rawClients) {
       });
     } else {
       const existing = nodeMap.get(nodeId);
-      // Keep best (highest) RSSI
       if (c.rssi !== null && (existing.rssi === null || c.rssi > existing.rssi)) {
         existing.rssi = c.rssi;
       }
-      // Fill in IP if not yet known
       if (!existing.ip && c.ip) existing.ip = c.ip;
-      // Track all active backhaul MACs
       if (!existing.meshActiveMacs.includes(c.mac)) {
         existing.meshActiveMacs.push(c.mac);
       }
@@ -106,7 +104,6 @@ function collapseMeshNodes(rawClients) {
 async function poll() {
   const allRawClients = [];
 
-  // Fetch clientlist.json and meshMap from master once per poll cycle
   let clientlistMap = null;
   let meshMap = new Map();
 
@@ -123,15 +120,42 @@ async function poll() {
   await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap);
+
+      // Success: reset failure counter, accept results
+      apFailCount[ap.name] = 0;
       clients.forEach(function(c) { allRawClients.push(c); });
-      apStatus[ap.name] = { online: true, lastSeen: new Date().toISOString(), error: null };
+
+      apStatus[ap.name] = {
+        online: true,
+        clients: clients.filter(function(c) { return !c.isMeshNode; }).length,
+        lastSeen: new Date().toISOString(),
+        error: null,
+      };
+
     } catch (err) {
-      logger.error('[Poll] AP ' + ap.name + ' failed: ' + err.message);
+      apFailCount[ap.name] = (apFailCount[ap.name] || 0) + 1;
+      const failCount = apFailCount[ap.name];
+
+      logger.error('[Poll] AP ' + ap.name + ' failed (attempt ' + failCount + '/' + FAILURE_THRESHOLD + '): ' + err.message);
+
       apStatus[ap.name] = {
         online: false,
+        clients: apStatus[ap.name] ? (apStatus[ap.name].clients || 0) : 0,
         lastSeen: apStatus[ap.name] ? apStatus[ap.name].lastSeen : null,
         error: err.message,
       };
+
+      if (failCount < FAILURE_THRESHOLD) {
+        // Carry over the clients from the previous successful poll for this AP
+        currentClients.forEach(function(c) {
+          if (c.apName === ap.name) allRawClients.push(c);
+        });
+        logger.warn('[Poll] AP ' + ap.name + ' carrying over ' +
+          Array.from(currentClients.values()).filter(function(c) { return c.apName === ap.name; }).length +
+          ' client(s) from last successful poll (failure ' + failCount + '/' + FAILURE_THRESHOLD + ')');
+      } else {
+        logger.warn('[Poll] AP ' + ap.name + ' reached failure threshold (' + FAILURE_THRESHOLD + '), clearing its clients.');
+      }
     }
   }));
 
@@ -149,7 +173,7 @@ async function poll() {
 
   prevClients = currentClients;
   currentClients = freshClients;
-  mqttModule.publishClientStates(prevClients, currentClients);
+  mqttModule.publishClientStates(prevClients, currentClients, apStatus);
   broadcastState();
 }
 
@@ -236,6 +260,7 @@ mqttModule.connect(config, async function(mac) {
 const intervalMs = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Starting. Polling every ' + (config.polling_interval_seconds || 30) + 's');
 logger.info('[Server] Log buffer size: ' + (config.log_buffer_size || 500) + ' lines');
+logger.info('[Server] AP failure threshold before client clear: ' + FAILURE_THRESHOLD);
 logger.info('[Server] APs: ' + aps.map(function(a) { return a.name + (a.master ? ' (master)' : ''); }).join(', '));
 logger.info('[Server] Master AP: ' + (masterAp ? masterAp.name : 'none configured'));
 logger.info('[Server] Debug logging: ' + (config.debug_logging ? 'ON' : 'OFF'));
