@@ -46,7 +46,6 @@ function runSSH(ap, command) {
 // ---------------------------------------------------------------------------
 // Driver detection
 // ---------------------------------------------------------------------------
-
 async function detectDriver(ap) {
   if (ap.driver) {
     var d = ap.driver.toLowerCase();
@@ -130,6 +129,38 @@ async function getRssiBroadcom(ap, iface, mac) {
   }
 }
 
+/**
+ * Fetch per-client TX/RX byte counters via "wl -i <iface> sta_info <mac>".
+ * Returns { tx_bytes, rx_bytes } or nulls if unsupported / parse fails.
+ *
+ * Relevant lines in sta_info output look like:
+ *   tx total bytes         12345678
+ *   rx total bytes         87654321
+ */
+async function getStatsBroadcom(ap, iface, mac) {
+  try {
+    var out = await runSSH(ap, 'wl -i ' + iface + ' sta_info ' + mac + ' 2>/dev/null || echo ""');
+    var tx = null;
+    var rx = null;
+    out.split('\n').forEach(function (line) {
+      var l = line.trim().toLowerCase();
+      if (l.indexOf('tx total bytes') !== -1) {
+        var parts = l.split(new RegExp('\\s+'));
+        var val = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(val)) tx = val;
+      }
+      if (l.indexOf('rx total bytes') !== -1) {
+        var parts2 = l.split(new RegExp('\\s+'));
+        var val2 = parseInt(parts2[parts2.length - 1], 10);
+        if (!isNaN(val2)) rx = val2;
+      }
+    });
+    return { tx_bytes: tx, rx_bytes: rx };
+  } catch (_) {
+    return { tx_bytes: null, rx_bytes: null };
+  }
+}
+
 async function deauthBroadcom(ap, iface, mac) {
   await runSSH(ap, 'wl -i ' + iface + ' deauthenticate ' + mac + ' 2>/dev/null');
 }
@@ -174,6 +205,40 @@ async function getAssoclistAtheros(ap, iface) {
   return parseWlanconfig(out);
 }
 
+/**
+ * Fetch per-client TX/RX byte counters for Atheros via
+ * "wlanconfig <iface> list sta" extended output.
+ *
+ * wlanconfig extended output columns (space-separated) when available:
+ *   ADDR  AID  CHAN  TXRATE  RXRATE  RSSI  MINRSSI  MAXRSSI  IDLE  TXSEQ  RXSEQ
+ *   CAPS  ACAPS  ERP  STATE  MAXRATE  HTCAPS  ASSOCTIME  IEs  PSMODE
+ *   RXTIME  TXTIME  RXBYTES  TXBYTES
+ * Column indices (0-based) if present: RXBYTES=22, TXBYTES=23
+ *
+ * Falls back to nulls if the firmware does not expose extended stats.
+ */
+async function getStatsAtheros(ap, iface, mac) {
+  try {
+    var out = await runSSH(ap, 'wlanconfig ' + iface + ' list sta 2>/dev/null || echo ""');
+    var tx = null;
+    var rx = null;
+    out.split('\n').forEach(function (line) {
+      var parts = line.trim().split(new RegExp('\\s+'));
+      if (parts.length < 2) return;
+      if (parts[0].toLowerCase() !== mac) return;
+      if (parts.length >= 24) {
+        var rxVal = parseInt(parts[22], 10);
+        var txVal = parseInt(parts[23], 10);
+        if (!isNaN(rxVal)) rx = rxVal;
+        if (!isNaN(txVal)) tx = txVal;
+      }
+    });
+    return { tx_bytes: tx, rx_bytes: rx };
+  } catch (_) {
+    return { tx_bytes: null, rx_bytes: null };
+  }
+}
+
 async function deauthAtheros(ap, iface, mac) {
   await runSSH(ap, 'wlanconfig ' + iface + ' kick ' + mac + ' 2>/dev/null');
 }
@@ -181,7 +246,6 @@ async function deauthAtheros(ap, iface, mac) {
 // ---------------------------------------------------------------------------
 // Master node helpers (XT8 AiMesh)
 // ---------------------------------------------------------------------------
-
 async function fetchClientlistJson(ap) {
   try {
     var raw = await runSSH(ap, 'cat /tmp/clientlist.json 2>/dev/null');
@@ -220,9 +284,6 @@ async function fetchClientlistJson(ap) {
  * Returns Map<lowercase-mac, nodeId> where nodeId is the lowercase primary
  * AP MAC (the key in relist.json). Every AP BSSID and every backhaul STA MAC
  * belonging to the same physical node maps to the same nodeId.
- *
- * This lets index.js collapse all MACs for a given node into one row per
- * physical node instead of one row per backhaul radio.
  */
 async function fetchMeshNodeMacs(ap) {
   var meshMap = new Map();
@@ -276,10 +337,11 @@ async function fetchMeshNodeMacs(ap) {
 
 /**
  * Fetch all wireless clients from an AP.
+ *
  * @param {object}      ap            AP config entry
  * @param {object|null} clientlistMap flat MAC->{ip,rssi} from master (or null)
  * @param {Map|null}    meshMap       Map<mac,nodeId> from fetchMeshNodeMacs (or null)
- * @returns {Array} client objects with isMeshNode + meshNodeId fields
+ * @returns {Array} client objects
  */
 async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
   var clients = [];
@@ -316,10 +378,12 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             var clEntry = clientlistMap ? clientlistMap[staMac] : null;
             var ip = (clEntry && clEntry.ip) ? clEntry.ip : (arpMacToIp[staMac] || null);
             var rssi = (clEntry && clEntry.rssi !== null) ? clEntry.rssi : staRssi;
+            var stats = await getStatsAtheros(ap, athIface, staMac);
             clients.push({
               mac: staMac, ip: ip, hostname: null, rssi: rssi,
               iface: athIface, apName: ap.name, apHost: ap.host,
               isMeshNode: meshNodeId !== null, meshNodeId: meshNodeId,
+              tx_bytes: stats.tx_bytes, rx_bytes: stats.rx_bytes,
             });
           }
         } catch (ifaceErr) {
@@ -347,10 +411,12 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
                 logger.debug('[SSH] ' + ap.name + ' wl rssi fallback for ' + mac + ': ' + macRssi);
               }
             }
+            var bcStats = await getStatsBroadcom(ap, bcIface, mac);
             clients.push({
               mac: mac, ip: macIp, hostname: null, rssi: macRssi,
               iface: bcIface, apName: ap.name, apHost: ap.host,
               isMeshNode: meshId !== null, meshNodeId: meshId,
+              tx_bytes: bcStats.tx_bytes, rx_bytes: bcStats.rx_bytes,
             });
           }
         } catch (ifaceErr) {
