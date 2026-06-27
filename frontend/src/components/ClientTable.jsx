@@ -47,6 +47,7 @@ function ipToInt(ip) {
   if (octets.some(function(o) { return isNaN(o) || o < 0 || o > 255; })) return null;
   return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
 }
+
 function compareByKey(a, b, key) {
   if (key === 'ip') {
     const ai = ipToInt(a.ip);
@@ -63,19 +64,18 @@ function compareByKey(a, b, key) {
 
 /**
  * Vendor column cell.
- * Mesh nodes show a clickable "Mesh Node" badge that filters by AP name.
+ * Mesh nodes show a clickable "Mesh Node" badge that filters by node type.
  * All other clients (Wi-Fi and discovered) show OUI chip + vendor name.
  */
-function VendorCell({ client, activeAps, activeVendors, activeOuis, onApClick, onVendorClick, onOuiClick }) {
+function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshClick, onVendorClick, onOuiClick }) {
   if (client.isMeshNode) {
-    const isActive = activeAps.has(client.apName);
     return (
       <button
-        onClick={function(e) { e.stopPropagation(); onApClick(client.apName); }}
-        title={'Filter by AP: ' + client.apName}
+        onClick={function(e) { e.stopPropagation(); onMeshClick(); }}
+        title="Filter by Mesh Node"
         className={
           'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium border transition-colors ' +
-          (isActive
+          (isMeshActive
             ? 'bg-indigo-800/60 border-indigo-500/70 text-indigo-200'
             : 'bg-indigo-900/40 border-indigo-700/50 text-indigo-300 hover:bg-indigo-800/50 hover:border-indigo-500/60')
         }
@@ -88,7 +88,7 @@ function VendorCell({ client, activeAps, activeVendors, activeOuis, onApClick, o
   const oui = macOui(client.mac);
   const ouiActive = oui && activeOuis.has(oui);
   const vendorActive = client.vendor && activeVendors.has(client.vendor);
-return (
+  return (
     <span className="inline-flex items-center gap-1.5">
       {oui && (
         <button
@@ -128,6 +128,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [activeAps, setActiveAps]         = useState(new Set());
   const [activeVendors, setActiveVendors] = useState(new Set());
   const [activeOuis, setActiveOuis]       = useState(new Set());
+  // Boolean filter: show only mesh nodes when true.
+  const [meshOnly, setMeshOnly] = useState(false);
 
   function toggleFacet(setter, value) {
     setter(function(prev) {
@@ -142,10 +144,13 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     setActiveAps(new Set());
     setActiveVendors(new Set());
     setActiveOuis(new Set());
+    setMeshOnly(false);
   }
 
-  const hasFilter = search.length > 0 || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0;
-const filtered = clients.filter(function(c) {
+  const hasFilter = search.length > 0 || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly;
+
+  const filtered = clients.filter(function(c) {
+    if (meshOnly && !c.isMeshNode) return false;
     if (search) {
       const q = search.toLowerCase();
       const textMatch = (
@@ -196,7 +201,8 @@ const filtered = clients.filter(function(c) {
   function resetSort() {
     setSortCols(DEFAULT_SORT);
   }
-function sortMark(key) {
+
+  function sortMark(key) {
     const idx = sortCols.findIndex(function(s) { return s.key === key; });
     if (idx === -1) return null;
     const col = sortCols[idx];
@@ -214,6 +220,9 @@ function sortMark(key) {
     });
 
   const chips = [];
+  if (meshOnly) {
+    chips.push({ label: 'Mesh Node', remove: function() { setMeshOnly(false); } });
+  }
   activeOuis.forEach(function(v) {
     chips.push({ label: 'OUI: ' + v, remove: function() { toggleFacet(setActiveOuis, v); } });
   });
@@ -223,7 +232,8 @@ function sortMark(key) {
   activeAps.forEach(function(v) {
     chips.push({ label: 'AP: ' + v, remove: function() { toggleFacet(setActiveAps, v); } });
   });
-return (
+
+  return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -264,7 +274,7 @@ return (
               return (
                 <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
                   {chip.label}
-<button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
+                  <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
                 </span>
               );
             })}
@@ -316,16 +326,16 @@ return (
                     (isMesh       ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
                      isDiscovered ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
                                     'hover:bg-gray-800/50')
-}
+                  }
                 >
                   <td className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>
                   <td className="px-4 py-3 text-xs text-left">
                     <VendorCell
                       client={c}
-                      activeAps={activeAps}
+                      isMeshActive={meshOnly}
                       activeVendors={activeVendors}
                       activeOuis={activeOuis}
-                      onApClick={function(v) { toggleFacet(setActiveAps, v); }}
+                      onMeshClick={function() { setMeshOnly(function(prev) { return !prev; }); }}
                       onVendorClick={function(v) { toggleFacet(setActiveVendors, v); }}
                       onOuiClick={function(v) { toggleFacet(setActiveOuis, v); }}
                     />
@@ -336,11 +346,11 @@ return (
                     <button
                       onClick={function() { toggleFacet(setActiveAps, c.apName); }}
                       title={'Filter by AP: ' + c.apName}
-                      className="inline-flex w-full items-center justify-start gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300"
+                      className="flex w-full items-center justify-start gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300"
                       style={activeAps.has(c.apName) ? { background: 'rgba(30,58,138,0.3)', borderColor: 'rgba(37,99,235,0.5)', color: 'rgb(147,197,253)' } : {}}
                     >
                       <span className={
-                        'w-1.5 h-1.5 rounded-full inline-block flex-shrink-0 ' +
+                        'w-1.5 h-1.5 rounded-full flex-shrink-0 ' +
                         (isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400')
                       }></span>
                       {c.apName}
@@ -348,7 +358,7 @@ return (
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-500">{c.iface || 'n/a'}</td>
                   <td className={'px-4 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
-{c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
+                    {c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">
                     {txFmt !== null ? txFmt : <span className="text-gray-600">n/a</span>}
