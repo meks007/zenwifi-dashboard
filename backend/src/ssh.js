@@ -205,42 +205,66 @@ async function getAssoclistAtheros(ap, iface) {
 }
 
 /**
- * Fetch per-client TX/RX byte counters for Atheros via hostapd_cli.
+ * Fetch TX/RX byte counters for all stations on an Atheros interface via a
+ * single "hostapd_cli -i <iface> all_sta" call.
  *
- * "hostapd_cli -i <iface> all_sta" returns one block per client separated
- * by blank lines. Each block starts with the client MAC on its own line,
- * followed by key=value pairs including rx_bytes and tx_bytes.
+ * The output has no blank lines between fields. Each station block starts
+ * with a bare MAC address line, followed by key=value lines. The next MAC
+ * line signals the start of the next block:
  *
- * Returns nulls if hostapd_cli is unavailable or the MAC is not found.
+ *   24:18:c6:12:f5:9c
+ *   flags=[AUTH][ASSOC][AUTHORIZED]
+ *   rx_bytes=18871829
+ *   tx_bytes=2003986
+ *   ...
+ *   90:11:95:f9:78:74
+ *   ...
+ *
+ * Returns Map<lowercase-mac, { tx_bytes, rx_bytes }>.
+ * Returns an empty Map if hostapd_cli is unavailable or produces no output.
  */
-async function getStatsAtheros(ap, iface, mac) {
+async function getAllStaStatsAtheros(ap, iface) {
+  var statsMap = new Map();
   try {
     var out = await runSSH(ap, 'hostapd_cli -i ' + iface + ' all_sta 2>/dev/null || echo ""');
+    if (!out || !out.trim()) return statsMap;
+
+    var currentMac = null;
     var tx = null;
     var rx = null;
-    var blocks = out.split('\n\n');
-    for (var i = 0; i < blocks.length; i++) {
-      var block = blocks[i].trim();
-      if (!block) continue;
-      var lines = block.split('\n');
-      if (lines[0].trim().toLowerCase() !== mac) continue;
-      for (var j = 1; j < lines.length; j++) {
-        var line = lines[j].trim();
-        if (line.indexOf('tx_bytes=') === 0) {
-          var val = parseInt(line.split('=')[1], 10);
-          if (!isNaN(val)) tx = val;
-        }
-        if (line.indexOf('rx_bytes=') === 0) {
-          var val2 = parseInt(line.split('=')[1], 10);
-          if (!isNaN(val2)) rx = val2;
-        }
+
+    function flush() {
+      if (currentMac !== null) {
+        statsMap.set(currentMac, { tx_bytes: tx, rx_bytes: rx });
       }
-      break;
     }
-    return { tx_bytes: tx, rx_bytes: rx };
-  } catch (_) {
-    return { tx_bytes: null, rx_bytes: null };
+
+    out.split('\n').forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) return;
+      if (isMac(line)) {
+        flush();
+        currentMac = line.toLowerCase();
+        tx = null;
+        rx = null;
+        return;
+      }
+      if (currentMac === null) return;
+      if (line.indexOf('tx_bytes=') === 0) {
+        var v = parseInt(line.slice('tx_bytes='.length), 10);
+        if (!isNaN(v)) tx = v;
+      } else if (line.indexOf('rx_bytes=') === 0) {
+        var v2 = parseInt(line.slice('rx_bytes='.length), 10);
+        if (!isNaN(v2)) rx = v2;
+      }
+    });
+    flush();
+
+    logger.debug('[SSH] ' + ap.name + ' ' + iface + ' hostapd_cli all_sta: ' + statsMap.size + ' station(s)');
+  } catch (err) {
+    logger.warn('[SSH] ' + ap.name + ' hostapd_cli all_sta on ' + iface + ' failed: ' + err.message);
   }
+  return statsMap;
 }
 
 async function deauthAtheros(ap, iface, mac) {
@@ -440,6 +464,10 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
         try {
           var stations = await getAssoclistAtheros(ap, athIface);
           logger.info('[SSH] ' + ap.name + ' iface ' + athIface + ': ' + stations.length + ' client(s)');
+
+          // One SSH call fetches stats for all stations on this interface
+          var statsMap = await getAllStaStatsAtheros(ap, athIface);
+
           for (var si = 0; si < stations.length; si++) {
             var staMac = stations[si].mac;
             var staRssi = stations[si].rssi;
@@ -449,7 +477,7 @@ async function fetchClientsFromAP(ap, clientlistMap, meshMap) {
             var clEntry = clientlistMap ? clientlistMap[staMac] : null;
             var ip = (clEntry && clEntry.ip) ? clEntry.ip : (arpMacToIp[staMac] || null);
             var rssi = (clEntry && clEntry.rssi !== null) ? clEntry.rssi : staRssi;
-            var stats = await getStatsAtheros(ap, athIface, staMac);
+            var stats = statsMap.get(staMac) || { tx_bytes: null, rx_bytes: null };
             clients.push({
               mac: staMac, ip: ip, hostname: null, rssi: rssi,
               iface: athIface, apName: ap.name, apHost: ap.host,
