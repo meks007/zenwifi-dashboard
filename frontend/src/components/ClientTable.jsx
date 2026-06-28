@@ -256,7 +256,10 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
   }
 
   return (
-    <div className="absolute right-0 top-8 z-50 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
+    // right-0 aligns panel right edge with the gear button right edge.
+    // max-w-[calc(100vw-1rem)] prevents it from overflowing the left edge of
+    // the viewport on narrow mobile screens where w-80 (320px) would be too wide.
+    <div className="absolute right-0 top-8 z-50 w-80 max-w-[calc(100vw-1rem)] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
         <div className="flex gap-2 items-center">
@@ -643,26 +646,27 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  // Desktop: card width = tableWidth + 2px (1px border each side).
-  //   maxWidth:100% ensures the card never overflows the viewport.
-  //   The scroll div (overflow-auto) scrolls horizontally if the viewport
-  //   is narrower than the table. When the table fits exactly there is no
-  //   scrollbar: scroll div client width == table width, so no mismatch.
-  // Mobile: full width, height is intrinsic -- the page itself scrolls.
+  // Desktop: card is exactly tableWidth+2px wide (1px border each side), capped at
+  //   100% of the viewport via maxWidth. overflowX:auto on the card handles horizontal
+  //   scrolling when the viewport is narrower than the table.
+  //   The scroll div only scrolls vertically (overflow-y-auto). Separating the axes
+  //   eliminates any phantom horizontal scrollbar from sub-pixel rounding.
+  //   Note: overflowX:auto on the card does NOT trap position:sticky on thead because
+  //   sticky top:0 is only broken by overflow-y (not overflow-x) on an ancestor.
+  // Mobile: full width, no height constraint -- the page itself scrolls.
   const cardStyle = isMobile
     ? { width: '100%', minWidth: 0 }
-    : { width: (tableWidth + 2) + 'px', maxWidth: '100%', minWidth: '400px' };
+    : { width: (tableWidth + 2) + 'px', maxWidth: '100%', minWidth: '400px', overflowX: 'auto' };
 
-  // Desktop: scroll div is the sole scroll container for both axes.
-  //   Height is bounded by sm:h-full on the card inside the viewport-locked shell.
-  // Mobile: no overflow on the scroll div -- page scrolls.
+  // Desktop: thin themed scrollbar on the vertical scroll div.
+  // Mobile: no style needed.
   const scrollDivStyle = isMobile
     ? {}
     : { scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' };
 
   return (
     // Desktop: sm:h-full fills the bounded flex-1 container from App.jsx.
-    // Mobile: no height constraint, content flows naturally.
+    // Mobile: no height constraint, content flows and the page scrolls.
     <div style={cardStyle} className="flex flex-col bg-gray-900 rounded-xl border border-gray-800 sm:h-full">
 
       {/* Toolbar */}
@@ -741,9 +745,11 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         )}
       </div>
 
-      {/* Desktop: sole scroll container for both axes, bounded by sm:h-full.
-          Mobile: no overflow -- page scrolls. */}
-      <div className={isMobile ? 'w-full' : 'flex-1 overflow-auto'} style={scrollDivStyle}>
+      {/* Desktop: vertical scroll only -- horizontal overflow is handled by overflowX:auto
+          on the card. Using overflow-y-auto here (not overflow-auto) avoids any phantom
+          horizontal scrollbar from sub-pixel rounding between the table and scroll div.
+          Mobile: no overflow -- the page scrolls. */}
+      <div className={isMobile ? 'w-full' : 'flex-1 overflow-y-auto'} style={scrollDivStyle}>
         <table
           className="text-sm border-collapse"
           style={isMobile
