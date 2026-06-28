@@ -142,6 +142,12 @@ export default function App() {
       });
   }, [showToast]);
 
+  // Navigate to log view and pre-fill the log search with a value.
+  const handleLogSearch = useCallback(function(value) {
+    setLogSearch(value);
+    setActiveTab('logs');
+  }, []);
+
   const errorCount = logs.filter(function(l) { return l.level === 'error'; }).length;
 
   const tabs = [
@@ -209,6 +215,7 @@ export default function App() {
           })}
         </div>
 
+        {/* Mobile: height is unconstrained, the page scrolls naturally. */}
         <div className="flex-1 sm:overflow-hidden py-3 flex justify-center">
           {activeTab === 'clients' && (
             <ClientTable
@@ -219,6 +226,7 @@ export default function App() {
               onPing={handlePing}
               search={clientSearch}
               onSearchChange={setClientSearch}
+              onLogSearch={handleLogSearch}
             />
           )}
 
