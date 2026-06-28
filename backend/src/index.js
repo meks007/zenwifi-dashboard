@@ -12,6 +12,7 @@ const ouiModule   = require('./oui');
 const opnsense    = require('./opnsense');
 const pinger      = require('./pinger');
 const db          = require('./db');
+const pkg         = require('../../package.json');
 
 const app = express();
 app.use(cors());
@@ -58,14 +59,16 @@ function broadcastState() {
   });
 
   broadcast({
-    type:         'clients',
-    clients:      visible,
-    apStatus:     apStatus,
+    type:          'clients',
+    clients:       visible,
+    apStatus:      apStatus,
     mqttConnected: mqttModule.isConnected(),
-    dbHealthy:    dbHealthy,
-    timestamp:    new Date().toISOString(),
+    dbHealthy:     dbHealthy,
+    version:       pkg.version,
+    timestamp:     new Date().toISOString(),
   });
 }
+
 function isIpv6(ip) {
   return typeof ip === 'string' && ip.indexOf(':') !== -1;
 }
@@ -131,7 +134,8 @@ async function poll() {
   let meshMap         = new Map();
   let nodeGroups      = new Map();
   let neighMap        = {};
-if (masterAp) {
+
+  if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
@@ -143,7 +147,8 @@ if (masterAp) {
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
-await Promise.allSettled(aps.map(async function(ap) {
+
+  await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(
         ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval
@@ -183,7 +188,8 @@ await Promise.allSettled(aps.map(async function(ap) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
   const collapsed = collapseMeshNodes(enriched);
-const dhcpEnriched = collapsed.map(function(c) {
+
+  const dhcpEnriched = collapsed.map(function(c) {
     var dhcp  = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
     var rawIp = (!c.isMeshNode && dhcp && dhcp.ip) ? dhcp.ip : (c.ip || null);
     return Object.assign({}, c, {
@@ -230,7 +236,8 @@ const dhcpEnriched = collapsed.map(function(c) {
     if (discoveredRows.length > 0) {
       logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     }
-pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
+
+    pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
     allClients = dhcpEnriched.concat(discoveredRows);
   }
@@ -327,12 +334,13 @@ app.get('/api/status', function(_req, res) {
 wss.on('connection', function(ws) {
   logger.debug('[WS] Client connected');
   ws.send(JSON.stringify({
-    type:         'clients',
-    clients:      Array.from(currentClients.values()),
-    apStatus:     apStatus,
+    type:          'clients',
+    clients:       Array.from(currentClients.values()),
+    apStatus:      apStatus,
     mqttConnected: mqttModule.isConnected(),
-    dbHealthy:    dbHealthy,
-    timestamp:    new Date().toISOString(),
+    dbHealthy:     dbHealthy,
+    version:       pkg.version,
+    timestamp:     new Date().toISOString(),
   }));
   ws.send(JSON.stringify({
     type:    'log_history',
@@ -340,6 +348,7 @@ wss.on('connection', function(ws) {
   }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
+
 const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
