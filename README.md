@@ -20,8 +20,9 @@ Supports:
   - AP name and interface
   - RSSI
   - TX/RX byte counters (shown as `null` if the firmware does not expose them)
+  - Reachability (last ping timestamp + result, for discovered clients)
 - **AP status overview**: online/offline, client counts, last seen timestamp, and last error
-- **Live log view** (server log ring buffer, full viewport height)
+- **Live log view** (file-backed, full viewport height, with history load and runtime debug toggle)
 - **Version badge + GitHub link** in the header (version sourced dynamically from the backend)
 
 ### Mesh-aware behavior (AiMesh)
@@ -53,8 +54,12 @@ The backend runs periodic ICMP reachability checks against all discovered (non-W
 - 3 ICMP packets per client, 1 s timeout each
 - Clients that fail all 3 packets are hidden from the frontend until they respond again
 - Newly discovered clients are pinged immediately (rather than waiting for the next scheduled cycle)
+- When a client transitions from Wi-Fi to discovered, an immediate ping is fired
+- **On-demand ping**: a Ping button in the client table triggers an immediate single-client ping
+  via `POST /api/ping`; the Reachable column updates optimistically without waiting for the next
+  broadcast cycle
 - Ping interval is configurable via `ping_interval_minutes` (default: 5 minutes)
-- Uses the system `ping` binary - no extra npm package required
+- Uses the system `ping` binary -- no extra npm package required
 
 ### Client control
 
@@ -63,12 +68,32 @@ The backend runs periodic ICMP reachability checks against all discovered (non-W
 
 ### Client table features
 
-- **Multi-column sort**: click column headers to sort; Shift+click a column header to remove it from the sort order
+- **Multi-column sort**: plain click = single-column sort; Shift+click = add/toggle a column in
+  the multi-sort stack; sort state is persisted to `localStorage` and survives tab switches
 - **Active filter chips**: OUI, vendor, and AP facets are shown as removable chips above the table
-- **AP name pills**: access point names are shown as styled pill buttons with a status dot; clicking filters the table to that AP
+- **AP name pills**: access point names are shown as styled pill buttons with a status dot;
+  clicking filters the table to that AP
 - **Search**: matches MAC, vendor, hostname, IP, AP name, "mesh node", and "discovered"
-- **Row badges**: mesh infrastructure rows show an "Infrastructure" badge; discovered rows show a "Discovered" badge
-- **Column settings**: toggle visible columns via an inline panel that unfolds below the header (works on mobile without overflowing the viewport)
+- **Row badges**: mesh infrastructure rows show an "Infrastructure" badge; discovered rows show
+  a "Discovered" badge
+- **Column settings**: toggle visible columns via an inline panel that unfolds below the header
+  (works on mobile without overflowing the viewport)
+- **Click-to-log**: clicking a MAC or IP cell switches to the Log view with that value
+  pre-filled as the search filter
+- **Reachable column**: shows last ping timestamp and result for discovered clients
+- All filter and search state is lifted to App and persists across tab switches
+
+### Log view
+
+- File-backed logger (replaces the old in-memory ring buffer); log files are purged on each
+  backend startup so every run starts with a clean log
+- **Load history**: buttons to request the last 500 lines or all lines from the server
+- **Top / Bottom** navigation buttons (blue); Top button is visible immediately on load
+- **Debug toggle**: a toggle in the log toolbar enables/disables debug logging at runtime
+  without restarting the backend; state is synced from `config.yaml` on connect and broadcast
+  to all connected frontends when changed
+- **Line count status bar** at the bottom showing filtered vs total line count
+- Clickable `[TAG]`, MAC, and IP tokens in log messages -- clicking sets the search filter
 
 ### MQTT integration
 
@@ -76,13 +101,27 @@ The backend runs periodic ICMP reachability checks against all discovered (non-W
 - Per-client state + info topics (retained)
 - Per-AP status topics (retained)
 - Global stats topic for total online clients (retained)
+- **Home Assistant MQTT Discovery**: publishes a `button` entity per client so HA can trigger
+  a Wi-Fi disconnect; entity name is "Disconnect Wi-Fi"; discovery is published once per client
+  on first appearance and retracted when the client goes offline
+
+### Housekeeping
+
+On startup (after one full interval delay) and then every `housekeeping_interval_minutes`
+(default: 60), the backend scans the SQLite DB for MACs that are no longer in the active
+client set and for each stale row:
+
+- Publishes `state=offline` and removes the HA discovery config (retained, empty payload)
+- Deletes the row from the DB
 
 ### Resilience
 
 - **AP failure resilience**: an AP's client list is only cleared after **3 consecutive poll failures**
 - **Interface discovery caching**: wireless interface discovery results are cached and reused across
   poll cycles (configurable via `iface_discovery_interval`), reducing SSH overhead significantly
-- Configurable poll interval, log ring buffer size, and debug logging
+- **DB offline state restore**: on startup, the pinger's status map is pre-seeded from the DB so
+  previously-offline discovered clients remain hidden until they respond
+- Configurable poll interval, log file settings, and debug logging
 
 ### Optional OPNsense integration
 
@@ -165,116 +204,67 @@ mqtt:
   topic_prefix: zenwifi
 
 # How often (in seconds) to poll all access points for connected clients.
-# Polling involves multiple SSH commands per AP, so keep this sane (>=30 recommended).
 polling_interval_seconds: 30
 
 # How often to re-run wireless interface discovery per AP (in poll cycles).
-# Discovery runs on the very first poll and then once every N cycles.
-# Example: polling_interval_seconds: 30, iface_discovery_interval: 10
-#   -> discovery runs on poll 0, 10, 20, 30, ... (every ~5 minutes)
-# Set to 1 to disable caching and always run discovery. Default: 10.
+# Default: 10
 iface_discovery_interval: 10
 
-# Size of the in-memory log ring buffer (number of log lines kept).
-# Older entries are dropped when the buffer is full. Default: 500.
-log_buffer_size: 500
+# File-backed logger settings.
+# Log files are purged on each backend startup.
+log_file:
+  path: /tmp/zenwifi.log
+  max_lines: 5000
 
 # Set to true to log every SSH command and its output (very verbose).
+# Can also be toggled at runtime from the Log view in the UI.
 debug_logging: false
 
-# Whether to include IPv6 addresses in the IP column.
-# Defaults to false: only IPv4 addresses are shown.
+# Whether to include IPv6 addresses in the IP column. Default: false.
 show_ipv6: false
 
-# How often (in minutes) to ping discovered (non-WiFi) clients to check reachability.
-# 3 ICMP packets are sent per client. Clients that fail all 3 are hidden from the
-# frontend until they respond again. Default: 5.
+# How often (in minutes) to ping discovered (non-WiFi) clients. Default: 5.
 ping_interval_minutes: 5
 
+# How often (in minutes) to evict stale DB records. Default: 60.
+housekeeping_interval_minutes: 60
+
 access_points:
-  # Mark exactly one AP as master: true. The master node maintains
-  # /tmp/clientlist.json which is the primary source for client IPs and
-  # RSSI values across all nodes. On ASUS AiMesh, this is the main router.
   - name: "Living Room"
     host: 192.168.1.1
     ssh_port: 22
     username: admin
     password: secret
     master: true
-    # driver: broadcom  # optional override; auto-detected if omitted
 
   - name: "Office"
     host: 192.168.1.2
     ssh_port: 22
     username: admin
     password: secret
-    # driver: broadcom
 
-  # Example: Atheros-based node (e.g. ZenWifi AC Mini with stock ASUS firmware)
-  - name: "Bedroom"
-    host: 192.168.1.3
-    ssh_port: 22
-    username: admin
-    password: secret
-    # driver: atheros
-
-# ---------------------------------------------------------------------------
-# OPNsense integration (optional)
-# ---------------------------------------------------------------------------
-# When configured, the backend queries OPNsense for:
-# - Dynamic leases        : via REST API -> client.dhcp.ip / hostname / leaseEnds
-# - Static mappings       : via SSH -> client.dhcp.description / hasReservation
-# - Neighbor discovery    : via REST API -> discovered clients on configured interfaces
-#
-# REST API credentials:
-# System -> Access -> Users -> <user> -> API keys
-# Required privileges:
-#   - DHCP: Leases (for lease enrichment)
-#   - Host Discovery: Search (for neighbor discovery)
-#
-# SSH credentials: the backend automatically handles OPNsense's numbered
-# console menu by sending "8" to open a shell.
-# Must connect as root.
-#
-# Remove this block or leave host empty to disable OPNsense integration.
-# ---------------------------------------------------------------------------
 opnsense:
-  # --- REST API (leases + neighbor discovery) ---
-  host: 192.168.x.x  # OPNsense IP or hostname
-  port: 443           # HTTPS port (default: 443)
+  host: 192.168.x.x
+  port: 443
   api_key: your-api-key
   api_secret: your-api-secret
-  verify_ssl: false   # Set to true if OPNsense has a valid/trusted TLS cert
-
-  # --- SSH (static reservations via /conf/config.xml) ---
-  ssh_host: 192.168.x.x  # defaults to 'host' above if omitted
+  verify_ssl: false
+  ssh_host: 192.168.x.x
   ssh_port: 22
   username: root
   password: your-root-password
-  # key_path: /run/secrets/opnsense_id_rsa  # path to private key
-
-  # --- Polling ---
-  poll_interval: 60  # How often (seconds) to refresh DHCP data
-
-  # --- Neighbor Discovery (discovered client detection) ---
-  # Requires OPNsense 26.1+ and the "Host Discovery" service enabled
-  # (Interfaces -> Neighbors -> Automatic Discovery).
-  # The API key user needs the "Host Discovery: Search" privilege.
-  # Hosts last seen more than 24 hours ago are ignored.
-  # Hosts already connected via ZenWifi Wi-Fi are never shown as discovered.
-  #
-  # interface_labels: optional map of OPNsense interface name (lowercase)
-  # to a human-readable label shown in the "Access Point" column.
+  poll_interval: 60
   neighbor_discovery:
     enabled: true
     interfaces:
       - lan
-      # - opt1
-      # - vlan10
     interface_labels:
       lan: "LAN"
-      # opt1: "IoT"
-      # vlan10: "Servers"
+
+# Home Assistant MQTT Discovery (optional)
+ha_discovery:
+  enabled: true
+  prefix: homeassistant
 ```
 
 ### Config reference
@@ -288,10 +278,12 @@ opnsense:
 | `mqtt.topic_prefix` | `zenwifi` | Root topic prefix |
 | `polling_interval_seconds` | `30` | Seconds between AP polls |
 | `iface_discovery_interval` | `10` | Re-run interface discovery every N poll cycles |
-| `log_buffer_size` | `500` | In-memory log ring buffer size (lines) |
-| `debug_logging` | `false` | Verbose SSH command logging |
+| `log_file.path` | `/tmp/zenwifi.log` | Log file path |
+| `log_file.max_lines` | `5000` | Maximum lines kept in the log file |
+| `debug_logging` | `false` | Verbose SSH command logging (also togglable at runtime) |
 | `show_ipv6` | `false` | Show IPv6 addresses in the IP column |
 | `ping_interval_minutes` | `5` | How often (minutes) to ICMP-ping discovered clients |
+| `housekeeping_interval_minutes` | `60` | How often (minutes) to evict stale DB records |
 | `access_points[].name` | required | Display name |
 | `access_points[].host` | required | AP hostname or IP |
 | `access_points[].ssh_port` | `22` | SSH port |
@@ -303,6 +295,8 @@ opnsense:
 | `opnsense.neighbor_discovery.enabled` | `false` | Enable OPNsense Neighbor Discovery |
 | `opnsense.neighbor_discovery.interfaces` | `[]` | OPNsense interfaces to watch |
 | `opnsense.neighbor_discovery.interface_labels` | `{}` | Human-readable labels for interface names |
+| `ha_discovery.enabled` | `false` | Enable Home Assistant MQTT Discovery |
+| `ha_discovery.prefix` | `homeassistant` | HA discovery topic prefix |
 
 ### Driver detection
 
@@ -346,6 +340,14 @@ Optional (only needed for reservation enrichment):
 | `{prefix}/aps/{name}/last_seen` | Publish | ISO 8601 timestamp | yes |
 | `{prefix}/stats/clients_online` | Publish | total online client count | yes |
 
+### Home Assistant MQTT Discovery
+
+When `ha_discovery.enabled: true`, the backend publishes a `button` entity for each online
+Wi-Fi client to `{ha_prefix}/button/zenwifi_{mac}/config` (retained). The button is named
+"Disconnect Wi-Fi" and pressing it publishes to the client's disconnect topic. The discovery
+config is retracted (empty retained payload) when the client goes offline or is evicted by
+housekeeping.
+
 ### Client info payload
 
 ```json
@@ -373,7 +375,7 @@ Every connected frontend receives a `clients` message on connect and on every po
   "apStatus": {...},
   "mqttConnected": true,
   "dbHealthy": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "repoUrl": "https://github.com/meks007/zenwifi-dashboard",
   "timestamp": "2026-06-28T09:00:00.000Z"
 }
@@ -453,25 +455,36 @@ poll failures occur. This prevents brief network interruptions from clearing the
 
 ```
 backend/
-  package.json        <- single source of truth for version and repository URL
-  Dockerfile          <- node:20-alpine; WORKDIR /app; runs src/index.js
+  package.json              <- single source of truth for version and repository URL
+  Dockerfile                <- node:20-alpine; WORKDIR /app; runs src/index.js
   src/
-    index.js          <- Express + WebSocket server; reads pkg from ../package.json
-    config.js         <- config.yaml loader
-    ssh.js            <- SSH client / AP polling
-    mqtt.js           <- MQTT bridge
-    opnsense.js       <- OPNsense REST + SSH integration
-    pinger.js         <- ICMP reachability checks
-    db.js             <- SQLite persistence
-    logger.js         <- ring-buffer logger with WebSocket broadcaster
+    index.js                <- Express + WebSocket server; orchestrates all modules
+    config.js               <- config.yaml loader + ha_discovery / log_file config helpers
+    routes.js               <- HTTP route handlers (clients, disconnect, ping, debug, logs)
+    ssh.js                  <- AP polling orchestrator
+    ssh-transport.js        <- raw SSH primitive (runSSH)
+    ssh-drivers.js          <- driver detection, interface cache, Broadcom/Atheros helpers
+    mesh.js                 <- AiMesh topology parsing (aplist.json, relist.json)
+    client-pipeline.js      <- pure poll transform helpers (IP filter, type detection, etc.)
+    mqtt.js                 <- MQTT bridge + HA MQTT Discovery publish/unpublish
+    opnsense.js             <- OPNsense coordinator
+    opnsense-dhcp.js        <- OPNsense leases, reservations, DHCP lookup
+    opnsense-neighbors.js   <- OPNsense neighbor/host discovery
+    pinger.js               <- ICMP reachability checks + on-demand single-client ping
+    housekeeping.js         <- stale DB record eviction + MQTT/HA cleanup
+    db.js                   <- SQLite persistence (client_seen, last_ping_at, last_ping_result)
+    logger.js               <- file-backed logger with WebSocket broadcaster and isDebug() getter
+    oui.js                  <- MAC OUI vendor lookup
 
 frontend/
   src/
-    App.jsx           <- WebSocket client; reads version + repoUrl from WS payload
+    App.jsx                 <- WebSocket client; owns all filter/facet state; debug toggle
     components/
-      ClientTable.jsx <- client list with sort, filter, AP pills, column toggle
-      LogView.jsx     <- live log view (full viewport height)
-      StatusBar.jsx   <- AP status overview
+      ClientTable.jsx       <- client list orchestrator (sort, filter, AP pills, column toggle)
+      ClientTableCell.jsx   <- per-cell renderer (MAC/IP click-to-log, ping button, disconnect)
+      ClientTableControls.jsx <- ColumnSettingsPanel, ResizeHandle
+      LogView.jsx           <- live log view (history load, debug toggle, Top/Bottom nav, line count)
+      StatusBar.jsx         <- AP status overview (4-column grid)
 ```
 
 ### Docker layout note
