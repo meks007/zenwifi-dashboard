@@ -114,6 +114,18 @@ export default function App() {
         if (data.success) {
           var label = data.online ? 'online' : 'offline';
           showToast(mac + ' is ' + label + ' (' + data.result + ')', data.online ? 'success' : 'error');
+          // Optimistically reflect the ping result in the client list immediately,
+          // without waiting for the next WebSocket broadcast.
+          setClients(function(prev) {
+            return prev.map(function(c) {
+              if (c.mac !== mac) return c;
+              return Object.assign({}, c, {
+                reachable:        data.online,
+                last_ping_result: data.result,
+                last_ping_at:     new Date().toISOString(),
+              });
+            });
+          });
         } else {
           showToast('Ping failed for ' + mac + ': ' + data.error, 'error');
         }
