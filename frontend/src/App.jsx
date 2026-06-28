@@ -23,13 +23,13 @@ export default function App() {
   const [repoUrl, setRepoUrl]             = useState(null);
 
   // Lifted filter state so it survives tab switches.
-  const [clientSearch, setClientSearch]           = useState('');
-  const [clientActiveAps, setClientActiveAps]     = useState(new Set());
+  const [clientSearch, setClientSearch]               = useState('');
+  const [clientActiveAps, setClientActiveAps]         = useState(new Set());
   const [clientActiveVendors, setClientActiveVendors] = useState(new Set());
-  const [clientActiveOuis, setClientActiveOuis]   = useState(new Set());
-  const [clientMeshOnly, setClientMeshOnly]       = useState(false);
-  const [logFilter, setLogFilter]                 = useState('all');
-  const [logSearch, setLogSearch]                 = useState('');
+  const [clientActiveOuis, setClientActiveOuis]       = useState(new Set());
+  const [clientMeshOnly, setClientMeshOnly]           = useState(false);
+  const [logFilter, setLogFilter]                     = useState('all');
+  const [logSearch, setLogSearch]                     = useState('');
 
   const wsRef = useRef(null);
 
@@ -73,8 +73,10 @@ export default function App() {
           appendLog(data.entry);
         }
 
+        // log_history replaces the current log buffer entirely.
+        // Sent on connect (last N lines) and in response to request_log_history.
         if (data.type === 'log_history') {
-          setLogs(data.logs || []);
+          setLogs(data.entries || []);
         }
 
         if (data.type === 'disconnect_result') {
@@ -109,6 +111,17 @@ export default function App() {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     setDisconnecting(function(d) { return Object.assign({}, d, { [mac]: true }); });
     wsRef.current.send(JSON.stringify({ type: 'disconnect', mac: mac }));
+  }, []);
+
+  // Request more log history from the server.
+  // n=0 means all lines across all rotated files; n>0 means last n lines.
+  const handleRequestHistory = useCallback(function(n) {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      type: 'request_log_history',
+      all:  n === 0,
+      n:    n,
+    }));
   }, []);
 
   const handlePing = useCallback(function(mac) {
@@ -249,16 +262,19 @@ export default function App() {
               onFilterChange={setLogFilter}
               search={logSearch}
               onSearchChange={setLogSearch}
+              onRequestHistory={handleRequestHistory}
             />
           )}
         </div>
       </main>
 
       {toast && (
-        <div className={
-          'fixed bottom-5 right-5 px-4 py-3 rounded-lg shadow-lg text-sm font-medium z-50 ' +
-          (toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white')
-        }>
+        <div
+          className={
+            'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-xl text-sm font-medium z-50 ' +
+            (toast.type === 'success' ? 'bg-green-700 text-white' : 'bg-red-700 text-white')
+          }
+        >
           {toast.msg}
         </div>
       )}
