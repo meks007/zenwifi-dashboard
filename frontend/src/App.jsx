@@ -21,6 +21,7 @@ export default function App() {
   const [activeTab, setActiveTab]         = useState('clients');
   const [version, setVersion]             = useState(null);
   const [repoUrl, setRepoUrl]             = useState(null);
+  const [debugMode, setDebugMode]         = useState(false);
 
   // Lifted filter state so it survives tab switches.
   const [clientSearch, setClientSearch]               = useState('');
@@ -77,6 +78,10 @@ export default function App() {
         // Sent on connect (last N lines) and in response to request_log_history.
         if (data.type === 'log_history') {
           setLogs(data.entries || []);
+        }
+
+        if (data.type === 'debug_mode') {
+          setDebugMode(!!data.enabled);
         }
 
         if (data.type === 'disconnect_result') {
@@ -159,6 +164,18 @@ export default function App() {
       });
   }, [showToast]);
 
+  const handleToggleDebug = useCallback(function() {
+    var next = !debugMode;
+    fetch('/api/debug', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ enabled: next }),
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(data) { setDebugMode(!!data.debug); })
+      .catch(function(err) { showToast('Debug toggle failed: ' + err.message, 'error'); });
+  }, [debugMode, showToast]);
+
   // Navigate to log view and pre-fill the log search with a value.
   const handleLogSearch = useCallback(function(value) {
     setLogSearch(value);
@@ -210,6 +227,8 @@ export default function App() {
             dbHealthy={dbHealthy}
             apStatus={apStatus}
             clientCount={clients.length}
+            debugMode={debugMode}
+            onToggleDebug={handleToggleDebug}
           />
         </div>
 
