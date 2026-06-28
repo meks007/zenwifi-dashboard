@@ -43,7 +43,6 @@ var dbHealthy      = true;
 
 const apFailCount = {};
 aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
-
 // ---------------------------------------------------------------------------
 // WebSocket broadcast
 // ---------------------------------------------------------------------------
@@ -89,8 +88,7 @@ async function poll() {
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
-
-  await Promise.allSettled(aps.map(async function(ap) {
+await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval);
       apFailCount[ap.name] = 0;
@@ -109,8 +107,7 @@ async function poll() {
       }
     }
   }));
-
-  const enriched = allRawClients.map(function(c) {
+const enriched = allRawClients.map(function(c) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
   const collapsed    = collapseMeshNodes(enriched, ouiModule.lookup);
@@ -148,8 +145,7 @@ async function poll() {
         isMeshNode: false, connectionType: 'discovered', lastSeen: c.lastSeen,
       };
     });
-
-    if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
+if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
     allClients = dhcpEnriched.concat(discoveredRows);
@@ -161,7 +157,15 @@ async function poll() {
 
   try {
     freshClients.forEach(function(c, mac) {
-      if (!prevClients.has(mac) && !db.getFirstSeen(mac)) { db.setFirstSeen(mac, now); logger.debug('[DB] first_seen set for ' + mac); }
+      var prev        = prevClients.get(mac);
+      var isNew       = !prev && !db.getFirstSeen(mac);
+      var returned    = !prev && !!db.getFirstSeen(mac);
+      var typeChanged = prev && prev.connectionType !== c.connectionType;
+      if (isNew || returned || typeChanged) {
+        db.setFirstSeen(mac, now);
+        var reason = isNew ? 'new client' : (returned ? 'returned after absence' : 'connection type changed (' + prev.connectionType + ' -> ' + c.connectionType + ')');
+        logger.debug('[DB] first_seen ' + (isNew ? 'set' : 'reset') + ' for ' + mac + ': ' + reason);
+      }
     });
     prevClients.forEach(function(_c, mac) {
       if (!freshClients.has(mac)) { db.deleteFirstSeen(mac); logger.debug('[DB] first_seen cleared for ' + mac); }
@@ -191,7 +195,6 @@ async function poll() {
   mqttModule.publishClientStates(prevClients, currentClients, apStatus, pinger.isOnline);
   broadcastState();
 }
-
 // ---------------------------------------------------------------------------
 // Disconnect handler
 // ---------------------------------------------------------------------------
@@ -225,6 +228,17 @@ async function handlePing(mac) {
   if (c.connectionType !== 'discovered') return { success: false, error: 'Ping is only supported for discovered clients' };
   try {
     var result = await pinger.pingClient(mac);
+    if (result.flipped && result.online) {
+      var now = new Date().toISOString();
+      try {
+        db.setFirstSeen(mac, now);
+        var c2 = currentClients.get(mac);
+        if (c2) c2.first_seen = now;
+        logger.debug('[DB] first_seen reset for ' + mac + ' on manual ping (came online)');
+      } catch (dbErr) {
+        logger.error('[DB] Failed to reset first_seen for ' + mac + ' on manual ping: ' + dbErr.message);
+      }
+    }
     broadcastState();
     return { success: true, online: result.online, result: result.received + '/' + result.sent, flipped: result.flipped };
   } catch (err) {
@@ -253,7 +267,6 @@ wss.on('connection', function(ws) {
   ws.send(JSON.stringify({ type: 'log_history', entries: logger.list() }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
-
 // ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
@@ -293,7 +306,6 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
 
   broadcastState();
 });
-
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
   logger.info('[Server] Listening on port ' + PORT);
