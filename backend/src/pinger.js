@@ -22,16 +22,19 @@
 //     - does nothing if a cycle is already in progress
 //
 //   pinger.getStatus(mac)
-//     - returns { online: bool, checkedAt: Date|null } or null if unknown
+//     - returns { online: bool, checkedAt: Date|null, last_ping_at: string|null,
+//                 last_ping_result: string|null } or null if unknown
 //
 //   pinger.isOnline(mac)
 //     - convenience shorthand; returns true / false / null (unknown yet)
 // ---------------------------------------------------------------------------
 
 const { exec } = require('child_process');
-const logger    = require('./logger');
+const logger   = require('./logger');
+const db       = require('./db');
 
-// mac -> { ip, online: bool|null, checkedAt: Date|null }
+// mac -> { ip, online: bool|null, checkedAt: Date|null,
+//           last_ping_at: string|null, last_ping_result: string|null }
 const statusMap = new Map();
 
 // { mac, ip } for the current set of discovered clients
@@ -44,7 +47,8 @@ let _lastCycleStartAt = 0;             // epoch ms of when the last cycle began
 
 /**
  * Ping a single IP address with 3 packets, 1 s timeout per packet.
- * Resolves to true (reachable) or false (unreachable / error).
+ * Resolves to { online: bool, sent: number, received: number }.
+ * We parse stdout to count received replies; falls back to 0/3 on error.
  */
 function pingOne(ip) {
   return new Promise(function(resolve) {
@@ -52,9 +56,20 @@ function pingOne(ip) {
     // -W 1   : wait 1 s for each reply  (Linux)
     // -w 3   : overall deadline 3 s     (Linux)
     // macOS uses -t instead of -W; the -W flag is silently ignored there
-    var cmd = 'ping -c 3 -W 1 -w 3 ' + ip + ' > /dev/null 2>&1';
-    exec(cmd, function(err) {
-      resolve(!err);
+    var cmd = 'ping -c 3 -W 1 -w 3 ' + ip + ' 2>&1';
+    exec(cmd, function(err, stdout) {
+      // Parse "X packets transmitted, Y received" from ping output.
+      var sent     = 3;
+      var received = 0;
+      var m = stdout && stdout.match(/(\d+) packets transmitted,\s*(\d+) (?:packets )?received/);
+      if (m) {
+        sent     = parseInt(m[1], 10);
+        received = parseInt(m[2], 10);
+      } else if (!err) {
+        // Could not parse but no error -> assume all received
+        received = sent;
+      }
+      resolve({ online: !err, sent: sent, received: received });
     });
   });
 }
@@ -83,16 +98,35 @@ async function runPingCycle() {
     var entry = snapshot[i];
     if (!entry.ip) continue; // no IP -> cannot ping
 
-    var online = await pingOne(entry.ip);
-    var prev   = statusMap.get(entry.mac);
+    logger.debug('[Pinger] Pinging ' + entry.mac + ' (' + entry.ip + ')');
 
+    var result = await pingOne(entry.ip);
+    var online = result.online;
+    var resultStr = result.received + '/' + result.sent;
+
+    logger.debug(
+      '[Pinger] Result for ' + entry.mac + ' (' + entry.ip + '): ' +
+      resultStr + ' packets received -> ' + (online ? 'ONLINE' : 'OFFLINE')
+    );
+
+    var prev    = statusMap.get(entry.mac);
     var flipped = !prev || prev.online !== online;
+    var now     = new Date();
 
     statusMap.set(entry.mac, {
-      ip:        entry.ip,
-      online:    online,
-      checkedAt: new Date(),
+      ip:               entry.ip,
+      online:           online,
+      checkedAt:        now,
+      last_ping_at:     now.toISOString(),
+      last_ping_result: resultStr,
     });
+
+    // Persist to DB so the result survives a backend restart.
+    try {
+      db.setLastPing(entry.mac, now.toISOString(), resultStr);
+    } catch (dbErr) {
+      logger.error('[Pinger] Failed to persist last_ping for ' + entry.mac + ': ' + dbErr.message);
+    }
 
     if (flipped) {
       logger.info(
