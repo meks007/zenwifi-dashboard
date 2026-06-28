@@ -104,8 +104,10 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
-      <header className="bg-gray-900 border-b border-gray-800 px-4 py-4 flex items-center justify-between">
+    // h-screen + overflow-hidden locks the page to the viewport.
+    // Scrolling happens inside each tab content area, not on the body.
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-950 text-gray-100 font-sans">
+      <header className="flex-none bg-gray-900 border-b border-gray-800 px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">ZW</div>
           <h1 className="text-lg font-semibold tracking-tight">Zenwifi Dashboard</h1>
@@ -115,16 +117,18 @@ export default function App() {
         </div>
       </header>
 
-      <main className="px-4 py-6 space-y-5">
-        <StatusBar
-          wsConnected={wsConnected}
-          mqttConnected={mqttConnected}
-          dbHealthy={dbHealthy}
-          apStatus={apStatus}
-          clientCount={clients.length}
-        />
+      <main className="flex-1 flex flex-col overflow-hidden px-4 pt-6">
+        <div className="flex-none">
+          <StatusBar
+            wsConnected={wsConnected}
+            mqttConnected={mqttConnected}
+            dbHealthy={dbHealthy}
+            apStatus={apStatus}
+            clientCount={clients.length}
+          />
+        </div>
 
-        <div className="flex gap-1 border-b border-gray-800">
+        <div className="flex-none flex gap-1 border-b border-gray-800 mt-5">
           {tabs.map(function(tab) {
             return (
               <button
@@ -143,17 +147,20 @@ export default function App() {
           })}
         </div>
 
-        {activeTab === 'clients' && (
-          <ClientTable
-            clients={clients}
-            disconnecting={disconnecting}
-            onDisconnect={handleDisconnect}
-          />
-        )}
+        {/* Tab content fills remaining height and clips. Each tab handles its own scroll. */}
+        <div className="flex-1 overflow-hidden py-5">
+          {activeTab === 'clients' && (
+            <ClientTable
+              clients={clients}
+              disconnecting={disconnecting}
+              onDisconnect={handleDisconnect}
+            />
+          )}
 
-        {activeTab === 'logs' && (
-          <LogView logs={logs} />
-        )}
+          {activeTab === 'logs' && (
+            <LogView logs={logs} />
+          )}
+        </div>
       </main>
 
       {toast && (
