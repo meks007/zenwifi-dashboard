@@ -6,7 +6,7 @@ import LogView from './components/LogView.jsx';
 const WS_URL = 'ws://' + window.location.host + '/ws';
 const RECONNECT_DELAY_MS = 3000;
 const MAX_LOG_ENTRIES = 50000;
-const VERSION  = 'v0.1.1';
+const VERSION  = 'v0.1.2';
 const REPO_URL = 'https://github.com/meks007/zenwifi-dashboard';
 
 export default function App() {
