@@ -183,7 +183,7 @@ function publishDiscovery(mac, haDiscovery) {
   var configTopic = haPrefix + '/button/zenwifi_' + macSafe + '/config';
 
   var payload = {
-    name:                    'Disconnect',
+    name:                    'Disconnect Wi-Fi',
     unique_id:               'zenwifi_disconnect_' + macSafe,
     command_topic:           prefix + '/clients/' + normMac + '/disconnect',
     payload_press:           'disconnect',
