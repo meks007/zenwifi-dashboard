@@ -29,36 +29,12 @@ function registerRoutes(app, deps) {
     res.json({ dbHealthy: getDbHealthy() });
   });
 
-  // ---------------------------------------------------------------------------
-  // GET /api/logs
-  //
-  // Returns log entries from the file-backed logger.
-  // Query parameters:
-  //   lines=N   last N lines (0 or omitted = all)
-  //   level=X   filter to entries at or above this level (debug|info|warn|error)
-  //
-  // Response: { entries: [...], total: N, truncated: bool }
-  // ---------------------------------------------------------------------------
-  var LEVEL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 };
-
+  // GET /api/logs?n=100   -- return last n lines (default 100, 0 = all)
+  // GET /api/logs?all=1   -- return all lines across all rotated files
   app.get('/api/logs', function(req, res) {
-    var lines     = parseInt(req.query.lines, 10) || 0;
-    var levelStr  = (req.query.level || '').toLowerCase();
-    var minLevel  = LEVEL_ORDER.hasOwnProperty(levelStr) ? LEVEL_ORDER[levelStr] : -1;
-
-    var entries = logger.tail(lines);
-
-    if (minLevel >= 0) {
-      entries = entries.filter(function(e) {
-        return (LEVEL_ORDER[e.level] || 0) >= minLevel;
-      });
-    }
-
-    res.json({
-      entries:   entries,
-      total:     entries.length,
-      truncated: lines > 0 && entries.length >= lines,
-    });
+    if (!logger) return res.status(503).json({ error: 'logger not available' });
+    var n = (req.query.all === '1' || req.query.all === 'true') ? 0 : parseInt(req.query.n, 10) || 100;
+    res.json({ entries: logger.tail(n) });
   });
 }
 
