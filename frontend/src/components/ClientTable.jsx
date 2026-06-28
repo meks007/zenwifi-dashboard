@@ -364,7 +364,7 @@ function ResizeHandle({ onResize, onDone }) {
 const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
 
 // ---- ClientTable ----
-export default function ClientTable({ clients }) {
+export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch]               = useState('');
   const [sortCols, setSortCols]           = useState(DEFAULT_SORT);
   const [activeAps, setActiveAps]         = useState(new Set());
@@ -448,16 +448,16 @@ export default function ClientTable({ clients }) {
       const existing = prev.find(function(s) { return s.key === key; });
       if (multi) {
         if (existing) {
-          if (existing.dir === 'asc') return prev.map(function(s) { return s.key === key ? { key, dir: 'desc' } : s; });
+          if (existing.dir === 'asc') return prev.map(function(s) { return s.key === key ? { key: key, dir: 'desc' } : s; });
           return prev.filter(function(s) { return s.key !== key; });
         }
-        return prev.concat([{ key, dir: 'asc' }]);
+        return prev.concat([{ key: key, dir: 'asc' }]);
       }
       if (existing && prev.length === 1) {
-        if (existing.dir === 'asc') return [{ key, dir: 'desc' }];
+        if (existing.dir === 'asc') return [{ key: key, dir: 'desc' }];
         return DEFAULT_SORT;
       }
-      return [{ key, dir: 'asc' }];
+      return [{ key: key, dir: 'asc' }];
     });
   }
 
@@ -507,9 +507,9 @@ export default function ClientTable({ clients }) {
 
   const sorted = filtered.slice().sort(function(a, b) {
     for (var i = 0; i < sortCols.length; i++) {
-      const { key, dir } = sortCols[i];
-      const cmp = compareByKey(a, b, key);
-      if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
+      const sc  = sortCols[i];
+      const cmp = compareByKey(a, b, sc.key);
+      if (cmp !== 0) return sc.dir === 'asc' ? cmp : -cmp;
     }
     return 0;
   });
@@ -601,14 +601,14 @@ export default function ClientTable({ clients }) {
       case 'tx_bytes':
         return (
           <td key="tx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
-            {fmtBytes(c.tx_bytes) || <span className="text-gray-600">n/a</span>}
+            {fmtBytes(c.tx_bytes) !== null ? fmtBytes(c.tx_bytes) : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'rx_bytes':
         return (
           <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
-            {fmtBytes(c.rx_bytes) || <span className="text-gray-600">n/a</span>}
+            {fmtBytes(c.rx_bytes) !== null ? fmtBytes(c.rx_bytes) : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
@@ -622,16 +622,20 @@ export default function ClientTable({ clients }) {
       case 'actions':
         return (
           <td key="actions" style={style} className="px-3 py-3 text-right overflow-hidden">
-            <a
-              href={'http://' + c.ip}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={function(e) { e.stopPropagation(); }}
-              className="text-xs text-gray-500 hover:text-blue-300 transition-colors font-mono"
-              title={'Open ' + c.ip}
-            >
-              {c.ip}
-            </a>
+            {!c.isMeshNode && !isDiscovered && (
+              <button
+                onClick={function(e) { e.stopPropagation(); onDisconnect(c.mac); }}
+                disabled={!!disconnecting[c.mac]}
+                className={
+                  'text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ' +
+                  (disconnecting[c.mac]
+                    ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                    : 'bg-red-600/20 text-red-400 border border-red-600/30 hover:bg-red-600/40 hover:text-red-300')
+                }
+              >
+                {disconnecting[c.mac] ? 'Disconnecting...' : 'Disconnect'}
+              </button>
+            )}
           </td>
         );
 
