@@ -23,9 +23,13 @@ export default function App() {
   const [repoUrl, setRepoUrl]             = useState(null);
 
   // Lifted filter state so it survives tab switches.
-  const [clientSearch, setClientSearch]   = useState('');
-  const [logFilter, setLogFilter]         = useState('all');
-  const [logSearch, setLogSearch]         = useState('');
+  const [clientSearch, setClientSearch]           = useState('');
+  const [clientActiveAps, setClientActiveAps]     = useState(new Set());
+  const [clientActiveVendors, setClientActiveVendors] = useState(new Set());
+  const [clientActiveOuis, setClientActiveOuis]   = useState(new Set());
+  const [clientMeshOnly, setClientMeshOnly]       = useState(false);
+  const [logFilter, setLogFilter]                 = useState('all');
+  const [logSearch, setLogSearch]                 = useState('');
 
   const wsRef = useRef(null);
 
@@ -226,6 +230,14 @@ export default function App() {
               onPing={handlePing}
               search={clientSearch}
               onSearchChange={setClientSearch}
+              activeAps={clientActiveAps}
+              onActiveApsChange={setClientActiveAps}
+              activeVendors={clientActiveVendors}
+              onActiveVendorsChange={setClientActiveVendors}
+              activeOuis={clientActiveOuis}
+              onActiveOuisChange={setClientActiveOuis}
+              meshOnly={clientMeshOnly}
+              onMeshOnlyChange={setClientMeshOnly}
               onLogSearch={handleLogSearch}
             />
           )}
