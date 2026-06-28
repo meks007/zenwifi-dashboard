@@ -43,6 +43,7 @@ var dbHealthy      = true;
 
 const apFailCount = {};
 aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
+
 // ---------------------------------------------------------------------------
 // WebSocket broadcast
 // ---------------------------------------------------------------------------
@@ -138,15 +139,23 @@ async function poll() {
     var discoveredRows = discovered.map(function(c) {
       var ifaceLabel = resolveIfaceLabel(c.interface, ndCfg);
       return {
-        mac: c.mac, ip: filterIp(c.ip || null, showIpv6), hostname: c.hostname,
-        vendor: ouiModule.lookup(c.mac),
-        dhcp: c.hasReservation ? { hasReservation: true, description: c.description } : null,
-        apName: 'Discovered ' + ifaceLabel,
-        apHost: config.opnsense ? config.opnsense.host : null,
-        iface: c.interface, rssi: null, tx_bytes: null, rx_bytes: null,
-        isMeshNode: false, connectionType: 'discovered', lastSeen: c.lastSeen,
+        mac:            c.mac,
+        ip:             filterIp(c.ip || null, showIpv6),
+        hostname:       c.hostname,
+        vendor:         ouiModule.lookup(c.mac),
+        dhcp:           c.hasReservation ? { hasReservation: true, description: c.description } : null,
+        apName:         'Discovered ' + ifaceLabel,
+        apHost:         config.opnsense ? config.opnsense.host : null,
+        iface:          c.interface,
+        rssi:           null,
+        tx_bytes:       null,
+        rx_bytes:       null,
+        isMeshNode:     false,
+        connectionType: 'discovered',
+        lastSeen:       c.lastSeen,
       };
     });
+
     if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
@@ -161,19 +170,33 @@ async function poll() {
     freshClients.forEach(function(c, mac) {
       var prev        = prevClients.get(mac);
       var typeChanged = prev && prev.connectionType !== c.connectionType;
+
       if (typeChanged) {
-        // Connection type changed (e.g. discovered -> wifi): treat as a new session.
+        // Connection type changed (e.g. wifi -> discovered): treat as a new session.
         db.setFirstSeen(mac, now);
         logger.debug('[DB] first_seen reset for ' + mac + ': connection type changed (' + prev.connectionType + ' -> ' + c.connectionType + ')');
+
+        // When a client drops off WiFi and appears as a discovered (wired) client,
+        // immediately ping it so reachability is known without waiting for the next
+        // scheduled cycle. Fire-and-forget: the result updates statusMap and triggers
+        // broadcastState() via the onStateChange callback.
+        if (prev.connectionType === 'wifi' && c.connectionType === 'discovered') {
+          logger.info('[Poll] ' + mac + ' transitioned wifi -> discovered, triggering immediate ping');
+          pinger.pingClient(mac).catch(function(err) {
+            logger.warn('[Poll] Immediate ping for ' + mac + ' failed: ' + err.message);
+          });
+        }
       } else if (!db.getFirstSeen(mac)) {
         // New client, or returned after its record was cleared when it disappeared.
         db.setFirstSeen(mac, now);
         logger.debug('[DB] first_seen set for ' + mac + ': new client');
       }
     });
+
     prevClients.forEach(function(_c, mac) {
       if (!freshClients.has(mac)) { db.deleteFirstSeen(mac); logger.debug('[DB] first_seen cleared for ' + mac); }
     });
+
     freshClients.forEach(function(c, mac) {
       c.first_seen = db.getFirstSeen(mac) || null;
       if (c.connectionType === 'discovered') {
@@ -188,6 +211,7 @@ async function poll() {
         }
       }
     });
+
     if (!dbHealthy) { dbHealthy = true; logger.info('[DB] Database recovered.'); broadcast({ type: 'db_status', healthy: true }); }
   } catch (dbErr) {
     logger.error('[DB] Error during timestamp update: ' + dbErr.message);
@@ -199,6 +223,7 @@ async function poll() {
   mqttModule.publishClientStates(prevClients, currentClients, apStatus, pinger.isOnline);
   broadcastState();
 }
+
 // ---------------------------------------------------------------------------
 // Disconnect handler
 // ---------------------------------------------------------------------------
@@ -267,10 +292,20 @@ wss.on('connection', function(ws) {
     if (c.connectionType !== 'discovered') return true;
     return pinger.isOnline(c.mac) !== false;
   });
-  ws.send(JSON.stringify({ type: 'clients', clients: visibleOnConnect, apStatus: apStatus, mqttConnected: mqttModule.isConnected(), dbHealthy: dbHealthy, version: pkg.version, repoUrl: pkg.repository.url, timestamp: new Date().toISOString() }));
+  ws.send(JSON.stringify({
+    type:         'clients',
+    clients:      visibleOnConnect,
+    apStatus:     apStatus,
+    mqttConnected: mqttModule.isConnected(),
+    dbHealthy:    dbHealthy,
+    version:      pkg.version,
+    repoUrl:      pkg.repository.url,
+    timestamp:    new Date().toISOString()
+  }));
   ws.send(JSON.stringify({ type: 'log_history', entries: logger.list() }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
+
 // ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
@@ -310,6 +345,7 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
 
   broadcastState();
 });
+
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
   logger.info('[Server] Listening on port ' + PORT);
