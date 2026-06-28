@@ -372,7 +372,9 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [showSettings, setShowSettings]   = useState(false);
   const settingsRef = useRef(null);
 
-  // matchMedia for breakpoint -- never misfires on mobile viewport reflows.
+  // Use matchMedia for breakpoint detection. This is driven by the CSS engine
+  // and never fires spuriously due to mobile viewport reflows (address bar,
+  // keyboard, etc.) the way a window resize listener does.
   const [isMobile, setIsMobile] = useState(function() {
     var mq = getMq();
     return mq ? mq.matches : false;
@@ -618,7 +620,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       case 'actions':
         return (
           <td key="actions" style={style} className="px-3 py-3 text-right">
-            {!c.isMeshNode && (
+            {/* Only show disconnect for wifi clients -- not mesh nodes or discovered (ARP-only) hosts. */}
+            {!c.isMeshNode && !isDiscovered && (
               <button
                 onClick={function() { onDisconnect(c.mac); }}
                 disabled={!!disconnecting[c.mac]}
@@ -641,20 +644,14 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   }
 
   // Card layout:
-  //   h-full fills the bounded container from App.jsx so the scroll div has
-  //   a real height and actually scrolls vertically.
-  //   No overflow on the card itself -- required so position:sticky on thead
-  //   is not trapped inside a scroll context and works within the scroll div.
-  //
-  //   Desktop: width = tableWidth + 2px (border left + right) so the scroll
-  //   div content matches the card inner width exactly. This eliminates the
-  //   phantom horizontal scrollbar caused by border sub-pixel mismatch when
-  //   using width:min-content.
-  //
-  //   Mobile: full width, minWidth:0 so it fits narrow screens.
+  //   Desktop: explicit pixel width (tableWidth + 2 for border) so the scroll
+  //   div content matches the card inner width exactly, eliminating phantom
+  //   scrollbars. maxWidth:100% clamps the card to the viewport; when the
+  //   table is wider the scroll div provides horizontal scrolling.
+  //   Mobile: full width, generous minHeight so rows are visible on short screens.
   const cardStyle = isMobile
-    ? { width: '100%', minWidth: 0 }
-    : { width: (tableWidth + 2) + 'px', minWidth: '400px' };
+    ? { width: '100%', minWidth: 0, minHeight: '60vh' }
+    : { width: (tableWidth + 2) + 'px', maxWidth: '100%', minWidth: '400px' };
 
   // The scroll div is the sole scroll container for both axes.
   // Its height is bounded by the card's h-full within the viewport-locked
@@ -743,9 +740,9 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         )}
       </div>
 
-      {/* Scroll area: the only element that scrolls, on both axes.
-          Bounded height from card h-full means it scrolls vertically.
-          thead position:sticky top:0 sticks within this container. */}
+      {/* Scroll area: sole scroll container for both axes.
+          Height is bounded by the card's h-full inside the viewport-locked
+          App shell. thead position:sticky top:0 works within this div. */}
       <div className="flex-1 overflow-auto" style={scrollDivStyle}>
         <table
           className="text-sm border-collapse"
