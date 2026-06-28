@@ -12,6 +12,7 @@ const ouiModule    = require('./oui');
 const opnsense     = require('./opnsense');
 const pinger       = require('./pinger');
 const db           = require('./db');
+const housekeeping = require('./housekeeping');
 const { registerRoutes }                              = require('./routes');
 const { filterIp, collapseMeshNodes, resolveIfaceLabel } = require('./client-pipeline');
 const pkg          = require('../package.json');
@@ -43,7 +44,6 @@ var dbHealthy      = true;
 
 const apFailCount = {};
 aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
-
 // ---------------------------------------------------------------------------
 // WebSocket broadcast
 // ---------------------------------------------------------------------------
@@ -89,8 +89,7 @@ async function poll() {
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
-
-  await Promise.allSettled(aps.map(async function(ap) {
+await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval);
       apFailCount[ap.name] = 0;
@@ -109,8 +108,7 @@ async function poll() {
       }
     }
   }));
-
-  const enriched = allRawClients.map(function(c) {
+const enriched = allRawClients.map(function(c) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
   const collapsed    = collapseMeshNodes(enriched, ouiModule.lookup);
@@ -155,8 +153,7 @@ async function poll() {
         lastSeen:       c.lastSeen,
       };
     });
-
-    if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
+if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
     allClients = dhcpEnriched.concat(discoveredRows);
@@ -192,8 +189,7 @@ async function poll() {
         logger.debug('[DB] first_seen set for ' + mac + ': new client');
       }
     });
-
-    prevClients.forEach(function(_c, mac) {
+prevClients.forEach(function(_c, mac) {
       if (!freshClients.has(mac)) { db.deleteFirstSeen(mac); logger.debug('[DB] first_seen cleared for ' + mac); }
     });
 
@@ -247,7 +243,6 @@ async function handleDisconnect(mac) {
     return { success: false, error: err.message };
   }
 }
-
 // ---------------------------------------------------------------------------
 // Ping handler (on-demand single-client ping)
 // ---------------------------------------------------------------------------
@@ -285,7 +280,6 @@ registerRoutes(app, {
   handlePing:        handlePing,
   getDbHealthy:      function() { return dbHealthy; },
 });
-
 wss.on('connection', function(ws) {
   logger.debug('[WS] Client connected');
   var visibleOnConnect = Array.from(currentClients.values()).filter(function(c) {
@@ -325,8 +319,7 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   var prefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
   mqttModule.publish(prefix + '/clients/' + mac + '/state', online ? 'online' : 'offline');
-
-  // When a discovered client comes back online, reset first_seen to now so
+// When a discovered client comes back online, reset first_seen to now so
   // the timestamp reflects the start of the current online session, not the
   // original discovery time (which may be days/weeks old).
   if (online) {
@@ -345,6 +338,14 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
 
   broadcastState();
 });
+
+var hkPrefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
+housekeeping.start(
+  config.housekeeping_interval_minutes || 60,
+  function() { return currentClients; },
+  function(topic, payload, retain) { mqttModule.publish(topic, payload, retain); },
+  hkPrefix
+);
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
