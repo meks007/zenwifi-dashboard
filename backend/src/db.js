@@ -18,10 +18,21 @@ db.pragma('journal_mode = WAL');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS client_seen (
-    mac        TEXT PRIMARY KEY,
-    first_seen TEXT NOT NULL
+    mac             TEXT PRIMARY KEY,
+    first_seen      TEXT NOT NULL,
+    last_ping_at    TEXT,
+    last_ping_result TEXT
   )
 `);
+
+// Migrate existing tables that predate the last_ping columns.
+const cols = db.prepare("PRAGMA table_info(client_seen)").all().map(function(r) { return r.name; });
+if (!cols.includes('last_ping_at')) {
+  db.exec('ALTER TABLE client_seen ADD COLUMN last_ping_at TEXT');
+}
+if (!cols.includes('last_ping_result')) {
+  db.exec('ALTER TABLE client_seen ADD COLUMN last_ping_result TEXT');
+}
 
 /**
  * Returns the ISO first_seen string for a MAC, or null if not found.
@@ -56,4 +67,28 @@ function loadAll() {
   return map;
 }
 
-module.exports = { getFirstSeen, setFirstSeen, deleteFirstSeen, loadAll };
+/**
+ * Returns { last_ping_at, last_ping_result } for a MAC, or null if not found.
+ * last_ping_result is a string like "3/3" or "1/3".
+ */
+function getLastPing(mac) {
+  const row = db.prepare('SELECT last_ping_at, last_ping_result FROM client_seen WHERE mac = ?').get(mac);
+  if (!row || !row.last_ping_at) return null;
+  return { last_ping_at: row.last_ping_at, last_ping_result: row.last_ping_result };
+}
+
+/**
+ * Persists the last ping timestamp and result for a MAC.
+ * Uses INSERT OR REPLACE so it works even if first_seen was never written.
+ */
+function setLastPing(mac, isoTimestamp, resultStr) {
+  db.prepare(`
+    INSERT INTO client_seen (mac, first_seen, last_ping_at, last_ping_result)
+    VALUES (?, COALESCE((SELECT first_seen FROM client_seen WHERE mac = ?), ?), ?, ?)
+    ON CONFLICT(mac) DO UPDATE SET
+      last_ping_at     = excluded.last_ping_at,
+      last_ping_result = excluded.last_ping_result
+  `).run(mac, mac, isoTimestamp, isoTimestamp, resultStr);
+}
+
+module.exports = { getFirstSeen, setFirstSeen, deleteFirstSeen, loadAll, getLastPing, setLastPing };
