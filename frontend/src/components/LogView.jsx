@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useState } from 'react';
+import { useRef, useLayoutEffect, useState } from 'react';
 
 const LEVEL_COLORS = {
   info:  'text-blue-300',
@@ -14,8 +14,8 @@ const LEVEL_BG = {
   debug: '',
 };
 
-// How close to the bottom (px) before we consider the user "at the bottom".
-const BOTTOM_THRESHOLD = 60;
+// How close to the top/bottom (px) before we consider the user "there".
+const EDGE_THRESHOLD = 60;
 
 function splitTextTokens(text) {
   var parts = [];
@@ -61,15 +61,15 @@ function parseMsg(msg) {
 }
 
 export default function LogView({ logs, filter, onFilterChange, search, onSearchChange, onRequestHistory }) {
-  // autoScroll is the canonical source of truth.
-  // true  = follow tail (we pin to bottom after every render)
-  // false = user scrolled up, we leave the viewport alone
+  // autoScroll = true: follow tail, pin to bottom after every render.
   const [autoScroll, setAutoScroll] = useState(true);
-  const scrollRef = useRef(null);
+  // Position indicators for showing scroll buttons.
+  const [atTop, setAtTop]       = useState(true);
+  const [atBottom, setAtBottom] = useState(true);
 
-  // We need to know whether the *next* scroll event is ours or the user's.
-  // We set this to true immediately before we programmatically set scrollTop,
-  // and clear it in the scroll handler.
+  const scrollRef    = useRef(null);
+  // Set to true immediately before any programmatic scrollTop change so the
+  // scroll handler knows to ignore that one event.
   const ownScrollRef = useRef(false);
 
   const filtered = logs.filter(function(entry) {
@@ -78,10 +78,9 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     return true;
   });
 
-  // After every render where autoScroll is on, instantly pin to the bottom.
-  // useLayoutEffect fires synchronously after DOM mutations, before the browser
-  // paints, so the scroll position is set before the user ever sees the frame.
-  // This is the only reliable way to keep up with rapid log activity.
+  // Pin to bottom synchronously after every render when following.
+  // useLayoutEffect fires before the browser paints so there is no visible
+  // frame where the scroll is behind the new content.
   useLayoutEffect(function() {
     if (!autoScroll) return;
     var el = scrollRef.current;
@@ -90,8 +89,12 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     el.scrollTop = el.scrollHeight;
   });
 
+  function updateEdgeState(el) {
+    setAtTop(el.scrollTop < EDGE_THRESHOLD);
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < EDGE_THRESHOLD);
+  }
+
   function handleScroll() {
-    // If this scroll event was triggered by us, ignore it.
     if (ownScrollRef.current) {
       ownScrollRef.current = false;
       return;
@@ -99,18 +102,31 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     var el = scrollRef.current;
     if (!el) return;
     var distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    var atBottom = distFromBottom < BOTTOM_THRESHOLD;
-    setAutoScroll(atBottom);
+    var nowAtBottom    = distFromBottom < EDGE_THRESHOLD;
+    setAutoScroll(nowAtBottom);
+    updateEdgeState(el);
   }
 
-  function resumeFollow() {
-    // Set state first so the layout effect fires on the next render and pins us.
+  function scrollToTop() {
+    setAutoScroll(false);
+    var el = scrollRef.current;
+    if (el) {
+      ownScrollRef.current = true;
+      el.scrollTop = 0;
+      // Update edge state after the jump.
+      setAtTop(true);
+      setAtBottom(el.scrollHeight <= el.clientHeight + EDGE_THRESHOLD);
+    }
+  }
+
+  function scrollToBottom() {
     setAutoScroll(true);
-    // Also do an immediate jump so there is zero visible delay.
     var el = scrollRef.current;
     if (el) {
       ownScrollRef.current = true;
       el.scrollTop = el.scrollHeight;
+      setAtTop(el.scrollHeight <= el.clientHeight + EDGE_THRESHOLD);
+      setAtBottom(true);
     }
   }
 
@@ -125,6 +141,11 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
   function handleTokenClick(value) {
     onSearchChange(search === value ? '' : value);
   }
+
+  // Scroll nav button style helpers.
+  var navBase = 'text-xs px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ';
+  var navFollow  = navBase + 'bg-blue-700/40 text-blue-300 hover:bg-blue-600/60';
+  var navNeutral = navBase + 'bg-gray-800 text-gray-400 hover:text-gray-200';
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col sm:h-full w-full">
@@ -157,14 +178,14 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
           <div className="flex gap-1">
             <button
               onClick={function() { onRequestHistory(500); }}
-              className="text-xs px-2.5 py-1 rounded-md font-medium bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              className={navNeutral}
               title="Request last 500 log lines from server"
             >
               Load 500
             </button>
             <button
               onClick={function() { onRequestHistory(0); }}
-              className="text-xs px-2.5 py-1 rounded-md font-medium bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              className={navNeutral}
               title="Request full log history from server (all rotated files)"
             >
               Load all
@@ -192,17 +213,31 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
           )}
         </div>
 
-        {/* Follow indicator / Resume button */}
-        {autoScroll ? (
-          <span className="text-xs text-gray-500 select-none whitespace-nowrap">Following</span>
-        ) : (
-          <button
-            onClick={resumeFollow}
-            className="text-xs px-2.5 py-1 rounded-md font-medium bg-blue-700/40 text-blue-300 hover:bg-blue-600/60 transition-colors whitespace-nowrap"
-          >
-            Resume &darr;
-          </button>
-        )}
+        {/* Scroll nav: top / bottom / following */}
+        <div className="flex gap-1 items-center">
+          {/* Top button: show when not at top */}
+          {!atTop && (
+            <button onClick={scrollToTop} className={navNeutral} title="Scroll to top">
+              &uarr; Top
+            </button>
+          )}
+          {/* Bottom / Following / Resume */}
+          {autoScroll ? (
+            <span className="text-xs text-gray-500 select-none whitespace-nowrap">Following</span>
+          ) : atBottom ? (
+            <span className="text-xs text-gray-500 select-none whitespace-nowrap">At bottom</span>
+          ) : (
+            <button onClick={scrollToBottom} className={navFollow} title="Resume auto-scroll">
+              Resume &darr;
+            </button>
+          )}
+          {/* Explicit bottom jump when not following and not at bottom */}
+          {!autoScroll && !atBottom && (
+            <button onClick={scrollToBottom} className={navNeutral} title="Jump to bottom">
+              &darr; Bottom
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Log lines */}
@@ -296,14 +331,18 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
       <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600 flex items-center gap-3">
         <span>{filtered.length} of {logs.length} entries</span>
         {search && <span className="text-blue-500/70">filtered by &ldquo;{search}&rdquo;</span>}
-        {!autoScroll && (
-          <button
-            onClick={resumeFollow}
-            className="ml-auto text-blue-400 hover:text-blue-200 transition-colors"
-          >
-            Scroll to bottom &darr;
-          </button>
-        )}
+        <div className="ml-auto flex gap-2">
+          {!atTop && (
+            <button onClick={scrollToTop} className="text-gray-500 hover:text-gray-300 transition-colors">
+              &uarr; Top
+            </button>
+          )}
+          {!atBottom && !autoScroll && (
+            <button onClick={scrollToBottom} className="text-blue-400 hover:text-blue-200 transition-colors">
+              &darr; Bottom
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
