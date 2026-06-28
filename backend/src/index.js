@@ -47,7 +47,6 @@ function broadcast(data) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
-
 function broadcastState() {
   var visible = Array.from(currentClients.values()).filter(function(c) {
     if (c.connectionType !== 'discovered') return true;
@@ -110,7 +109,6 @@ function resolveIfaceLabel(ifaceName, ndCfg) {
   var raw = ifaceName || 'unknown';
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
-
 async function poll() {
   const allRawClients = [];
   let clientlistMap = null;
@@ -157,7 +155,7 @@ await Promise.allSettled(aps.map(async function(ap) {
           if (c.apName === ap.name) allRawClients.push(c);
         });
         logger.warn('[Poll] AP ' + ap.name + ' carrying over ' +
-          Array.from(currentClients.values()).filter(function(c) { return c.apName === ap.name; }).length +
+Array.from(currentClients.values()).filter(function(c) { return c.apName === ap.name; }).length +
           ' client(s) from last successful poll (failure ' + failCount + '/' + FAILURE_THRESHOLD + ')');
       } else {
         logger.warn('[Poll] AP ' + ap.name + ' reached failure threshold (' + FAILURE_THRESHOLD + '), clearing its clients.');
@@ -178,8 +176,7 @@ const enriched = allRawClients.map(function(c) {
       hostname: (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
     });
   });
-
-  var allClients = dhcpEnriched;
+var allClients = dhcpEnriched;
   var ndCfg = config.opnsense && config.opnsense.neighbor_discovery;
 
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
@@ -217,8 +214,7 @@ pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip
   const now = new Date().toISOString();
   const freshClients = new Map();
   allClients.forEach(function(c) { freshClients.set(c.mac, c); });
-
-  try {
+try {
     freshClients.forEach(function(c, mac) {
       if (!prevClients.has(mac) && !db.getFirstSeen(mac)) {
         db.setFirstSeen(mac, now);
@@ -260,8 +256,7 @@ pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip
       broadcast({ type: 'db_status', healthy: false });
     }
   }
-
-  prevClients = currentClients;
+prevClients = currentClients;
   currentClients = freshClients;
   mqttModule.publishClientStates(prevClients, currentClients, apStatus);
   broadcastState();
@@ -307,7 +302,6 @@ app.post('/api/disconnect', async function(req, res) {
 app.get('/api/status', function(_req, res) {
   res.json({ dbHealthy: dbHealthy });
 });
-
 wss.on('connection', function(ws) {
   logger.debug('[WS] Client connected');
   // Apply the same pinger filter as broadcastState() so offline discovered
@@ -345,9 +339,10 @@ mqttModule.connect(config, handleDisconnect);
 opnsense.startPolling(config.opnsense);
 pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
+  var prefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
+  mqttModule.publish(prefix + '/clients/' + mac + '/state', online ? 'online' : 'offline');
   broadcastState();
 });
-
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
   logger.info('[Server] Listening on port ' + PORT);
