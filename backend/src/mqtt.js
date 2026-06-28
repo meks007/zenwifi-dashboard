@@ -29,10 +29,10 @@ function connect(cfg, disconnectCallback) {
     clean: true,
     reconnectPeriod: 5000,
     will: {
-      topic: prefix + '/bridge/state',
+      topic:   prefix + '/bridge/state',
       payload: 'offline',
-      qos: 1,
-      retain: true,
+      qos:     1,
+      retain:  true,
     },
   });
 
@@ -42,13 +42,13 @@ function connect(cfg, disconnectCallback) {
     const topic = prefix + '/clients/+/disconnect';
     mqttClient.subscribe(topic, { qos: 1 }, function (err) {
       if (err) console.error('[MQTT] Subscribe error:', err.message);
-      else console.log('[MQTT] Subscribed to ' + topic);
+      else     console.log('[MQTT] Subscribed to ' + topic);
     });
   });
 
   mqttClient.on('message', function (topic) {
     const re = new RegExp('^' + getPrefix() + '/clients/([^/]+)/disconnect$');
-    const m = topic.match(re);
+    const m  = topic.match(re);
     if (m) {
       console.log('[MQTT] Disconnect request for MAC: ' + m[1]);
       if (onDisconnectRequest) onDisconnectRequest(m[1]);
@@ -82,13 +82,27 @@ function publish(topic, payload, retain) {
  *
  * Global (retained):
  *   <prefix>/stats                      JSON: total_clients, mesh_nodes, regular_clients, timestamp
+ *
+ * @param {Map}      prevClients     clients from the previous poll cycle
+ * @param {Map}      currentClients  clients from the current poll cycle
+ * @param {object}   apStatus        AP status map
+ * @param {function} pingerIsOnline  pinger.isOnline(mac) -> true | false | null
+ *                                   Pass null to skip pinger checks (all discovered = online).
  */
-function publishClientStates(prevClients, currentClients, apStatus) {
+function publishClientStates(prevClients, currentClients, apStatus, pingerIsOnline) {
   const prefix = getPrefix();
-  const now = new Date().toISOString();
+  const now    = new Date().toISOString();
 
   currentClients.forEach(function (c, mac) {
-    publish(prefix + '/clients/' + mac + '/state',      'online');
+    // For discovered clients, defer to the pinger: if it has confirmed the
+    // client is offline, keep publishing offline so the neighbour-discovery
+    // poll cycle cannot silently reset the retained topic back to online.
+    var state = 'online';
+    if (c.connectionType === 'discovered' && typeof pingerIsOnline === 'function') {
+      if (pingerIsOnline(mac) === false) state = 'offline';
+    }
+
+    publish(prefix + '/clients/' + mac + '/state',      state);
     publish(prefix + '/clients/' + mac + '/last_seen',  now);
     publish(prefix + '/clients/' + mac + '/first_seen', c.first_seen || null);
     publish(prefix + '/clients/' + mac + '/ap',         c.apName || '');
