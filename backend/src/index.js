@@ -225,7 +225,6 @@ async function handlePing(mac) {
   if (c.connectionType !== 'discovered') return { success: false, error: 'Ping is only supported for discovered clients' };
   try {
     var result = await pinger.pingClient(mac);
-    // broadcastState so the UI reflects the updated reachability immediately
     broadcastState();
     return { success: true, online: result.online, result: result.received + '/' + result.sent, flipped: result.flipped };
   } catch (err) {
@@ -274,6 +273,24 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   var prefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
   mqttModule.publish(prefix + '/clients/' + mac + '/state', online ? 'online' : 'offline');
+
+  // When a discovered client comes back online, reset first_seen to now so
+  // the timestamp reflects the start of the current online session, not the
+  // original discovery time (which may be days/weeks old).
+  if (online) {
+    var now = new Date().toISOString();
+    try {
+      db.setFirstSeen(mac, now);
+      logger.debug('[DB] first_seen reset for ' + mac + ' on return to online');
+    } catch (dbErr) {
+      logger.error('[DB] Failed to reset first_seen for ' + mac + ': ' + dbErr.message);
+    }
+    // Patch the in-memory client so the next broadcastState/publishClientStates
+    // immediately reflects the new first_seen without waiting for the next poll.
+    var c = currentClients.get(mac);
+    if (c) c.first_seen = now;
+  }
+
   broadcastState();
 });
 
