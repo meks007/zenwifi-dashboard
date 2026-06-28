@@ -402,200 +402,223 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   function getWidth(col) { return colWidths[col.id] || col.defaultWidth; }
 
+  const tableWidth = columns
+    .filter(function(c) { return c.visible; })
+    .reduce(function(sum, c) { return sum + getWidth(c); }, 0);
+
+  useEffect(function() {
+    saveColumnPrefs(columns);
+  }, [columns]);
+
+  // Close settings panel on outside click
+  useEffect(function() {
+    function handler(e) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
+        setShowSettings(false);
+      }
+    }
+    document.addEventListener('mousedown', handler);
+    return function() { document.removeEventListener('mousedown', handler); };
+  }, []);
+
   function handleResize(colId, delta) {
     setColWidths(function(prev) {
-      const def = DEFAULT_COLUMNS.find(function(c) { return c.id === colId; });
-      const cur = prev[colId] || (def ? def.defaultWidth : 100);
+      const col = columns.find(function(c) { return c.id === colId; });
+      const cur = prev[colId] || (col ? col.defaultWidth : 100);
       return Object.assign({}, prev, { [colId]: Math.max(MIN_COL_WIDTH, cur + delta) });
     });
   }
 
   function handleResizeDone() {
-    setColWidths(function(w) { saveWidthPrefs(w); return w; });
+    saveWidthPrefs(colWidths);
   }
 
-  useEffect(function() { saveColumnPrefs(columns); }, [columns]);
-
-  useEffect(function() {
-    if (!showSettings) return;
-    function handler(e) {
-      if (settingsRef.current && !settingsRef.current.contains(e.target)) setShowSettings(false);
-    }
-    document.addEventListener('mousedown', handler);
-    return function() { document.removeEventListener('mousedown', handler); };
-  }, [showSettings]);
-
-  // Refresh relative timestamps every 30 s.
-  const [, setTick] = useState(0);
-  useEffect(function() {
-    const id = setInterval(function() { setTick(function(n) { return n + 1; }); }, 30000);
-    return function() { clearInterval(id); };
-  }, []);
-
-  // Which columns to show depends on the current breakpoint.
-  const visibleCols = columns.filter(function(c) {
-    return isMobile ? c.mobileVisible : c.visible;
-  });
-
-  // Desktop: sum of fixed px column widths. Mobile: auto layout.
-  const tableWidth = isMobile
-    ? null
-    : visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
-
-  function toggleFacet(setter, value) {
-    setter(function(prev) {
-      const next = new Set(prev);
-      if (next.has(value)) { next.delete(value); } else { next.add(value); }
-      return next;
-    });
-  }
-
-  function clearAll() {
-    setSearch('');
-    setActiveAps(new Set());
-    setActiveVendors(new Set());
-    setActiveOuis(new Set());
-    setMeshOnly(false);
-  }
-
-  const hasFilter = search.length > 0 || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly;
-
-  const filtered = clients.filter(function(c) {
-    if (meshOnly && !c.isMeshNode) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const hit = (
-        (c.mac      && c.mac.toLowerCase().includes(q)) ||
-        (c.vendor   && c.vendor.toLowerCase().includes(q)) ||
-        (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-        (c.ip       && c.ip.toLowerCase().includes(q)) ||
-        (c.apName   && c.apName.toLowerCase().includes(q)) ||
-        (c.isMeshNode && 'mesh node'.includes(q)) ||
-        (c.connectionType === 'discovered' && 'discovered'.includes(q))
-      );
-      if (!hit) return false;
-    }
-    if (activeAps.size     > 0 && !activeAps.has(c.apName))       return false;
-    if (activeVendors.size > 0 && !activeVendors.has(c.vendor))   return false;
-    if (activeOuis.size    > 0 && !activeOuis.has(macOui(c.mac))) return false;
-    return true;
-  });
-
-  const sorted = filtered.slice().sort(function(a, b) {
-    for (var i = 0; i < sortCols.length; i++) {
-      const cmp = compareByKey(a, b, sortCols[i].key);
-      if (cmp !== 0) return sortCols[i].dir === 'asc' ? cmp : -cmp;
-    }
-    return 0;
-  });
-
-  function toggleSort(key, event) {
-    const shift = event && event.shiftKey;
+  function toggleSort(key, e) {
+    const shift = e && e.shiftKey;
     setSortCols(function(prev) {
-      const idx = prev.findIndex(function(s) { return s.key === key; });
-      if (shift) return prev.filter(function(s) { return s.key !== key; });
-      if (idx === -1) return prev.concat({ key: key, dir: 'asc' });
-      if (prev[idx].dir === 'asc') {
-        return prev.map(function(s, i) { return i === idx ? { key: s.key, dir: 'desc' } : s; });
+      const existing = prev.find(function(s) { return s.key === key; });
+      if (!shift) {
+        if (existing) {
+          return existing.dir === 'asc'
+            ? [{ key, dir: 'desc' }]
+            : [{ key, dir: 'asc' }];
+        }
+        return [{ key, dir: 'asc' }];
       }
-      return prev.filter(function(s) { return s.key !== key; });
+      // Multi-sort
+      if (existing) {
+        const next = prev.filter(function(s) { return s.key !== key; });
+        if (existing.dir === 'asc') next.push({ key, dir: 'desc' });
+        return next.length ? next : DEFAULT_SORT;
+      }
+      return prev.concat({ key, dir: 'asc' });
     });
   }
 
   function resetSort() { setSortCols(DEFAULT_SORT); }
 
+  const isDefaultSort =
+    sortCols.length === 1 &&
+    sortCols[0].key === DEFAULT_SORT[0].key &&
+    sortCols[0].dir === DEFAULT_SORT[0].dir;
+
   function sortMark(key) {
-    const idx = sortCols.findIndex(function(s) { return s.key === key; });
-    if (idx === -1) return null;
-    const arrow = sortCols[idx].dir === 'asc' ? ' (asc)' : ' (desc)';
-    const badge = sortCols.length > 1
-      ? <sup className="ml-0.5 text-blue-400 font-bold">{idx + 1}</sup>
-      : null;
-    return <span className="text-blue-400">{arrow}{badge}</span>;
+    const s = sortCols.find(function(sc) { return sc.key === key; });
+    if (!s) return null;
+    const idx = sortCols.indexOf(s);
+    const arrow = s.dir === 'asc' ? ' \u2191' : ' \u2193';
+    return (
+      <span className="text-blue-400 ml-0.5">
+        {arrow}{sortCols.length > 1 ? <sup className="text-blue-500">{idx + 1}</sup> : null}
+      </span>
+    );
   }
 
-  const isDefaultSort =
-    sortCols.length === DEFAULT_SORT.length &&
-    sortCols.every(function(s, i) { return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir; });
+  const visibleCols = isMobile
+    ? columns.filter(function(c) { return c.mobileVisible; })
+    : columns.filter(function(c) { return c.visible; });
+
+  // ---- Filtering ----
+  function toggleSet(setter, val) {
+    setter(function(prev) {
+      const next = new Set(prev);
+      if (next.has(val)) next.delete(val); else next.add(val);
+      return next;
+    });
+  }
+
+  function toggleAp(ap)         { toggleSet(setActiveAps, ap); }
+  function toggleVendor(vendor) { toggleSet(setActiveVendors, vendor); }
+  function toggleOui(oui)       { toggleSet(setActiveOuis, oui); }
+  function toggleMesh()         { setMeshOnly(function(v) { return !v; }); }
+
+  const filtered = clients.filter(function(c) {
+    if (meshOnly && !c.isMeshNode) return false;
+    if (activeAps.size    > 0 && !activeAps.has(c.apName))         return false;
+    if (activeVendors.size > 0 && !activeVendors.has(c.vendor))    return false;
+    if (activeOuis.size   > 0 && !activeOuis.has(macOui(c.mac)))   return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      (c.mac      && c.mac.toLowerCase().includes(q))      ||
+      (c.vendor   && c.vendor.toLowerCase().includes(q))   ||
+      (c.hostname && c.hostname.toLowerCase().includes(q)) ||
+      (c.ip       && c.ip.toLowerCase().includes(q))       ||
+      (c.apName   && c.apName.toLowerCase().includes(q))
+    );
+  });
+
+  const sorted = filtered.slice().sort(function(a, b) {
+    for (var i = 0; i < sortCols.length; i++) {
+      const s   = sortCols[i];
+      const cmp = compareByKey(a, b, s.key);
+      if (cmp !== 0) return s.dir === 'asc' ? cmp : -cmp;
+    }
+    return 0;
+  });
+
+  // ---- Filter chips ----
+  const hasFilter = activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly || search;
+
+  function clearAll() {
+    setActiveAps(new Set());
+    setActiveVendors(new Set());
+    setActiveOuis(new Set());
+    setMeshOnly(false);
+    setSearch('');
+  }
 
   const chips = [];
-  if (meshOnly) chips.push({ label: 'Mesh Node', remove: function() { setMeshOnly(false); } });
-  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleFacet(setActiveOuis, v);    } }); });
-  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
-  activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
+  if (meshOnly) chips.push({ label: 'Mesh Nodes', remove: toggleMesh });
+  activeAps.forEach(function(ap) {
+    chips.push({ label: 'AP: ' + ap, remove: function() { toggleAp(ap); } });
+  });
+  activeVendors.forEach(function(v) {
+    chips.push({ label: 'Vendor: ' + v, remove: function() { toggleVendor(v); } });
+  });
+  activeOuis.forEach(function(o) {
+    chips.push({ label: 'OUI: ' + o, remove: function() { toggleOui(o); } });
+  });
 
-  // On mobile columns have no fixed width; browser auto-sizes.
-  // On desktop each cell gets the stored/default px width.
+  // ---- Cell renderer ----
   function renderCell(c, col) {
     const isDiscovered = c.connectionType === 'discovered';
-    const isMesh       = c.isMeshNode;
-    const style        = isMobile ? {} : (function() {
-      const w = getWidth(col);
-      return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' };
-    })();
-
+    const style = isMobile ? {} : { width: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px', overflow: 'hidden' };
     switch (col.id) {
       case 'mac':
-        return <td key="mac" style={style} className="px-3 py-3 font-mono text-xs text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap">{c.mac}</td>;
+        return (
+          <td key="mac" style={style} className="px-3 py-3 font-mono text-xs text-gray-300 whitespace-nowrap">
+            {c.mac || <span className="text-gray-600">n/a</span>}
+          </td>
+        );
 
       case 'vendor':
         return (
-          <td key="vendor" style={style} className="px-3 py-3 text-xs text-left overflow-hidden">
+          <td key="vendor" style={style} className="px-3 py-3 text-xs">
             <VendorCell
               client={c}
               isMeshActive={meshOnly}
               activeVendors={activeVendors}
               activeOuis={activeOuis}
-              onMeshClick={function() { setMeshOnly(function(p) { return !p; }); }}
-              onVendorClick={function(v) { toggleFacet(setActiveVendors, v); }}
-              onOuiClick={function(v) { toggleFacet(setActiveOuis, v); }}
+              onMeshClick={toggleMesh}
+              onVendorClick={toggleVendor}
+              onOuiClick={toggleOui}
             />
           </td>
         );
 
       case 'hostname':
         return (
-          <td key="hostname" style={style} className="px-3 py-3 text-gray-300 overflow-hidden text-ellipsis whitespace-nowrap">
+          <td key="hostname" style={style} className="px-3 py-3 text-xs text-gray-300 truncate">
             {c.hostname || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'ip':
         return (
-          <td key="ip" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
-            {c.ip || <span className="text-gray-600">n/a</span>}
+          <td key="ip" style={style} className="px-3 py-3 font-mono text-xs text-gray-300 whitespace-nowrap">
+            <span className="flex items-center gap-1.5">
+              {c.ip || <span className="text-gray-600">n/a</span>}
+              {isDiscovered && (
+                <span
+                  className="inline-block text-xs rounded px-1 py-0.5 border border-amber-700/50 bg-amber-900/20 text-amber-400"
+                  title="Discovered via ARP -- not an active Wi-Fi client"
+                >
+                  ARP
+                </span>
+              )}
+            </span>
           </td>
         );
 
       case 'apName':
         return (
-          <td key="apName" style={style} className="px-3 py-3 text-left overflow-hidden">
-            <button
-              onClick={function() { toggleFacet(setActiveAps, c.apName); }}
-              title={'Filter by AP: ' + c.apName}
-              className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300 text-left max-w-full"
-              style={activeAps.has(c.apName) ? { background: 'rgba(30,58,138,0.3)', borderColor: 'rgba(37,99,235,0.5)', color: 'rgb(147,197,253)' } : {}}
-            >
-              <span className={
-                'w-1.5 h-1.5 rounded-full flex-shrink-0 ' +
-                (isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400')
-              }></span>
-              <span className="truncate">{c.apName}</span>
-            </button>
+          <td key="apName" style={style} className="px-3 py-3 text-xs truncate">
+            {c.apName ? (
+              <button
+                onClick={function() { toggleAp(c.apName); }}
+                title={'Filter by AP: ' + c.apName}
+                className={'transition-colors ' + (activeAps.has(c.apName) ? 'text-blue-300' : 'text-gray-400 hover:text-blue-300')}
+              >
+                {c.apName}
+              </button>
+            ) : (
+              <span className="text-gray-600">n/a</span>
+            )}
           </td>
         );
 
       case 'iface':
         return (
-          <td key="iface" style={style} className="px-3 py-3 font-mono text-xs text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap">
-            {c.iface || 'n/a'}
+          <td key="iface" style={style} className="px-3 py-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+            {c.iface || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'rssi':
         return (
           <td key="rssi" style={style} className={'px-3 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
-            {c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
+            {c.rssi != null ? c.rssi + ' dBm' : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
@@ -646,27 +669,27 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  // Desktop: card is exactly tableWidth+2px wide (1px border each side), capped at
-  //   100% of the viewport via maxWidth. overflowX:auto on the card handles horizontal
-  //   scrolling when the viewport is narrower than the table.
-  //   The scroll div only scrolls vertically (overflow-y-auto). Separating the axes
-  //   eliminates any phantom horizontal scrollbar from sub-pixel rounding.
-  //   Note: overflowX:auto on the card does NOT trap position:sticky on thead because
-  //   sticky top:0 is only broken by overflow-y (not overflow-x) on an ancestor.
-  // Mobile: full width, no height constraint -- the page itself scrolls.
+  // Desktop: 97% width avoids pixel-math phantom scrollbars caused by sub-pixel
+  //   rounding between the table and the card. maxWidth caps it so the card never
+  //   exceeds the table's natural width. overflowX:auto on the card handles
+  //   horizontal scrolling; the scroll div is vertical only (overflow-y-auto).
+  // Mobile: overflowX:auto lets the card itself scroll horizontally when the
+  //   auto-width table exceeds the outer shell. Without this the table bleeds
+  //   over the shell rather than staying contained inside it.
   const cardStyle = isMobile
-    ? { width: '100%', minWidth: 0 }
-    : { width: (tableWidth + 2) + 'px', maxWidth: '100%', minWidth: '400px', overflowX: 'auto' };
+    ? { width: '100%', minWidth: 0, overflowX: 'auto' }
+    : { width: '97%', maxWidth: (tableWidth + 2) + 'px', minWidth: '400px', overflowX: 'auto' };
 
-  // Desktop: thin themed scrollbar on the vertical scroll div.
-  // Mobile: no style needed.
+  // Desktop: scroll div is the sole scroll container for both axes.
+  //   Height is bounded by sm:h-full on the card inside the viewport-locked shell.
+  // Mobile: no overflow on the scroll div -- page scrolls.
   const scrollDivStyle = isMobile
     ? {}
     : { scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' };
 
   return (
     // Desktop: sm:h-full fills the bounded flex-1 container from App.jsx.
-    // Mobile: no height constraint, content flows and the page scrolls.
+    // Mobile: no height constraint, content flows naturally.
     <div style={cardStyle} className="flex flex-col bg-gray-900 rounded-xl border border-gray-800 sm:h-full">
 
       {/* Toolbar */}
@@ -745,10 +768,10 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         )}
       </div>
 
-      {/* Desktop: vertical scroll only -- horizontal overflow is handled by overflowX:auto
-          on the card. Using overflow-y-auto here (not overflow-auto) avoids any phantom
-          horizontal scrollbar from sub-pixel rounding between the table and scroll div.
-          Mobile: no overflow -- the page scrolls. */}
+      {/* Desktop: vertical scroll only -- horizontal is handled by the card's
+          overflowX:auto. Using overflow-y-auto avoids phantom horizontal scrollbars
+          from sub-pixel rounding between the table width and scroll div clientWidth.
+          Mobile: no overflow -- page scrolls. */}
       <div className={isMobile ? 'w-full' : 'flex-1 overflow-y-auto'} style={scrollDivStyle}>
         <table
           className="text-sm border-collapse"
