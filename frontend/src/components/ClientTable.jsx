@@ -20,10 +20,9 @@ const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
 const MOBILE_BP     = 640; // px, matches Tailwind sm:
 
-// matchMedia query created once at module level.
-// Using matchMedia instead of window.innerWidth avoids spurious breakpoint
-// flips caused by resize events that fire when the mobile browser adjusts
-// the visual viewport (address bar show/hide, keyboard, etc.).
+// matchMedia singleton -- avoids spurious breakpoint flips caused by mobile
+// browser chrome reflows (address bar, keyboard). The CSS engine drives this,
+// so it always agrees with what Tailwind's sm: breakpoint sees.
 var _mq = null;
 function getMq() {
   if (!_mq && typeof window !== 'undefined') {
@@ -373,9 +372,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [showSettings, setShowSettings]   = useState(false);
   const settingsRef = useRef(null);
 
-  // Use matchMedia for breakpoint detection. This is driven by the CSS engine
-  // and never fires spuriously due to mobile viewport reflows (address bar,
-  // keyboard, etc.) the way a window resize listener does.
+  // matchMedia for breakpoint -- never misfires on mobile viewport reflows.
   const [isMobile, setIsMobile] = useState(function() {
     var mq = getMq();
     return mq ? mq.matches : false;
@@ -643,20 +640,29 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  // Card layout: flex-col, h-full fills the centered container from App.jsx.
-  // No overflow on the card itself so position:sticky can propagate through.
-  // Desktop: width shrinks to table content (min-content).
-  // Mobile: full width with a min-height so rows are visible on short screens.
+  // Card layout:
+  //   h-full fills the bounded container from App.jsx so the scroll div has
+  //   a real height and actually scrolls vertically.
+  //   No overflow on the card itself -- required so position:sticky on thead
+  //   is not trapped inside a scroll context and works within the scroll div.
+  //
+  //   Desktop: width = tableWidth + 2px (border left + right) so the scroll
+  //   div content matches the card inner width exactly. This eliminates the
+  //   phantom horizontal scrollbar caused by border sub-pixel mismatch when
+  //   using width:min-content.
+  //
+  //   Mobile: full width, minWidth:0 so it fits narrow screens.
   const cardStyle = isMobile
     ? { width: '100%', minWidth: 0 }
-    : { width: 'min-content', minWidth: '400px' };
+    : { width: (tableWidth + 2) + 'px', minWidth: '400px' };
 
-  // The scroll div (flex-1 overflow-auto) is the sole scroll container for
-  // both axes. Its height is bounded by the card's h-full within the
-  // viewport-locked layout from App.jsx, so it actually scrolls vertically.
-  // position:sticky on thead works correctly within this bounded div.
-  // On mobile a minHeight ensures the table area never collapses to zero.
-  const scrollDivStyle = isMobile ? { minHeight: '320px' } : {};
+  // The scroll div is the sole scroll container for both axes.
+  // Its height is bounded by the card's h-full within the viewport-locked
+  // App shell, so it scrolls vertically and thead sticky works inside it.
+  // Firefox scrollbar styling is applied inline (scrollbar-width/color).
+  const scrollDivStyle = isMobile
+    ? { minHeight: '320px', scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' }
+    : { scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' };
 
   return (
     <div style={cardStyle} className="h-full flex flex-col bg-gray-900 rounded-xl border border-gray-800">
@@ -738,9 +744,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       </div>
 
       {/* Scroll area: the only element that scrolls, on both axes.
-          Its height is bounded by the card's h-full + flex-1 so it does
-          not grow unboundedly and actually scrolls vertically.
-          thead position:sticky top:0 works within this bounded scroll div. */}
+          Bounded height from card h-full means it scrolls vertically.
+          thead position:sticky top:0 sticks within this container. */}
       <div className="flex-1 overflow-auto" style={scrollDivStyle}>
         <table
           className="text-sm border-collapse"
