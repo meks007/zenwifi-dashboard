@@ -188,8 +188,6 @@ async function poll() {
 
   prevClients    = currentClients;
   currentClients = freshClients;
-  // Pass pinger.isOnline so publishClientStates can honour the pinger's
-  // offline verdict for discovered clients instead of blindly publishing online.
   mqttModule.publishClientStates(prevClients, currentClients, apStatus, pinger.isOnline);
   broadcastState();
 }
@@ -219,11 +217,30 @@ async function handleDisconnect(mac) {
 }
 
 // ---------------------------------------------------------------------------
+// Ping handler (on-demand single-client ping)
+// ---------------------------------------------------------------------------
+async function handlePing(mac) {
+  const c = currentClients.get(mac);
+  if (!c)                              return { success: false, error: 'Client not found' };
+  if (c.connectionType !== 'discovered') return { success: false, error: 'Ping is only supported for discovered clients' };
+  try {
+    var result = await pinger.pingClient(mac);
+    // broadcastState so the UI reflects the updated reachability immediately
+    broadcastState();
+    return { success: true, online: result.online, result: result.received + '/' + result.sent, flipped: result.flipped };
+  } catch (err) {
+    logger.error('[Ping] Error pinging ' + mac + ': ' + err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HTTP routes + WebSocket
 // ---------------------------------------------------------------------------
 registerRoutes(app, {
   getCurrentClients: function() { return currentClients; },
   handleDisconnect:  handleDisconnect,
+  handlePing:        handlePing,
   getDbHealthy:      function() { return dbHealthy; },
 });
 
