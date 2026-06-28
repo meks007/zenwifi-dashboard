@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 
 const LEVEL_COLORS = {
   info:  'text-blue-300',
@@ -52,7 +52,6 @@ function parseMsg(msg) {
       parts.push({ type: 'unit', value: match[0], tag: match[1] });
       firstUnit = true;
     } else {
-      // Subsequent bracket groups are plain text, not clickable.
       parts.push({ type: 'text', value: match[0] });
     }
     last = re.lastIndex;
@@ -63,9 +62,13 @@ function parseMsg(msg) {
   return parts;
 }
 
-export default function LogView({ logs, filter, onFilterChange, search, onSearchChange }) {
+export default function LogView({ logs, filter, onFilterChange, search, onSearchChange, onRequestHistory }) {
+  // autoScroll: true = follow tail; false = user scrolled up, paused
   const [autoScroll, setAutoScroll] = useState(true);
+  const scrollRef = useRef(null);
   const bottomRef = useRef(null);
+  // Track whether the last scroll was programmatic so we don't fight ourselves
+  const programmaticScroll = useRef(false);
 
   const filtered = logs.filter(function(entry) {
     if (filter !== 'all' && entry.level !== filter) return false;
@@ -73,11 +76,34 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     return true;
   });
 
+  // Scroll to bottom whenever new entries arrive and autoScroll is on.
   useEffect(function() {
     if (autoScroll && bottomRef.current) {
+      programmaticScroll.current = true;
       bottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs, autoScroll]);
+
+  // Detect user scroll: pause auto-scroll when scrolling up, resume at bottom.
+  function handleScroll() {
+    if (programmaticScroll.current) {
+      programmaticScroll.current = false;
+      return;
+    }
+    var el = scrollRef.current;
+    if (!el) return;
+    // Consider "at bottom" when within 40px of the end.
+    var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setAutoScroll(atBottom);
+  }
+
+  function scrollToBottom() {
+    setAutoScroll(true);
+    if (bottomRef.current) {
+      programmaticScroll.current = true;
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }
 
   function formatTime(iso) {
     try {
@@ -94,9 +120,11 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
 
   return (
     <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col sm:h-full w-full">
+      {/* Toolbar */}
       <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-gray-300 mr-2">Log Output</h2>
 
+        {/* Level filter buttons */}
         <div className="flex gap-1">
           {['all', 'info', 'warn', 'error', 'debug'].map(function(lvl) {
             return (
@@ -116,6 +144,27 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
           })}
         </div>
 
+        {/* History buttons */}
+        {onRequestHistory && (
+          <div className="flex gap-1">
+            <button
+              onClick={function() { onRequestHistory(500); }}
+              className="text-xs px-2.5 py-1 rounded-md font-medium bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              title="Request last 500 log lines from server"
+            >
+              Load 500
+            </button>
+            <button
+              onClick={function() { onRequestHistory(0); }}
+              className="text-xs px-2.5 py-1 rounded-md font-medium bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
+              title="Request full log history from server (all rotated files)"
+            >
+              Load all
+            </button>
+          </div>
+        )}
+
+        {/* Search */}
         <div className="ml-auto relative">
           <input
             type="text"
@@ -135,18 +184,26 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
           )}
         </div>
 
-        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={autoScroll}
-            onChange={function(e) { setAutoScroll(e.target.checked); }}
-            className="rounded"
-          />
-          Auto-scroll
-        </label>
+        {/* Auto-scroll indicator / resume button */}
+        {autoScroll ? (
+          <span className="text-xs text-gray-500 select-none">Following</span>
+        ) : (
+          <button
+            onClick={scrollToBottom}
+            className="text-xs px-2.5 py-1 rounded-md font-medium bg-blue-700/40 text-blue-300 hover:bg-blue-600/50 transition-colors"
+            title="Resume auto-scroll"
+          >
+            Resume &darr;
+          </button>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto font-mono text-xs">
+      {/* Log lines */}
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto font-mono text-xs"
+      >
         {filtered.length === 0 && (
           <div className="px-4 py-10 text-center text-gray-600">No log entries.</div>
         )}
@@ -229,9 +286,18 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
         <div ref={bottomRef} />
       </div>
 
-      <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
-        {filtered.length} of {logs.length} entries
-        {search && <span className="ml-2 text-blue-500/70">filtered by &ldquo;{search}&rdquo;</span>}
+      {/* Footer */}
+      <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600 flex items-center gap-3">
+        <span>{filtered.length} of {logs.length} entries</span>
+        {search && <span className="text-blue-500/70">filtered by &ldquo;{search}&rdquo;</span>}
+        {!autoScroll && (
+          <button
+            onClick={scrollToBottom}
+            className="ml-auto text-blue-400 hover:text-blue-200 transition-colors"
+          >
+            Scroll to bottom &darr;
+          </button>
+        )}
       </div>
     </div>
   );
