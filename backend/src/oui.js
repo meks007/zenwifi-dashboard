@@ -1,13 +1,17 @@
+'use strict';
+
 // MAC OUI vendor lookup using the 'oui-data' npm package.
 // oui-data exports a plain JSON object keyed by 6-digit uppercase OUI hex (e.g. "203706").
 // Falls back to null if not found or package unavailable.
+
+const logger = require('./logger');
 
 let ouiData = null;
 
 try {
   ouiData = require('oui-data');
 } catch (e) {
-  console.warn('[OUI] oui-data package not available, vendor lookup disabled:', e.message);
+  logger.warn('[OUI] oui-data package not available, vendor lookup disabled: ' + e.message);
 }
 
 function lookup(mac) {
