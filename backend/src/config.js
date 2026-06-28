@@ -33,4 +33,23 @@ function getHaDiscoveryConfig(cfg) {
   };
 }
 
-module.exports = { loadConfig, getHaDiscoveryConfig };
+/**
+ * Returns a normalised log file config object, or null when disabled.
+ *
+ * Supported config.yaml shape:
+ *   log_file: /data/logs/zenwifi.log   # omit or leave empty to disable file logging
+ *   log_file_max_bytes: 10485760        # default: 10 MB
+ *   log_file_max_rotations: 3           # default: 3
+ *   log_tail_lines: 100                 # lines sent to client on WS connect (default: 100)
+ */
+function getLogFileConfig(cfg) {
+  if (!cfg || !cfg.log_file) return null;
+  return {
+    path:         cfg.log_file,
+    maxBytes:     (cfg.log_file_max_bytes     > 0) ? cfg.log_file_max_bytes     : 10 * 1024 * 1024,
+    maxRotations: (cfg.log_file_max_rotations > 0) ? cfg.log_file_max_rotations : 3,
+    tailLines:    (cfg.log_tail_lines         > 0) ? cfg.log_tail_lines         : 100,
+  };
+}
+
+module.exports = { loadConfig, getHaDiscoveryConfig, getLogFileConfig };
