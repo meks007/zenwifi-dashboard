@@ -26,6 +26,8 @@ export default function ClientTableCell({
   onApToggle,
   onVendorToggle,
   onOuiToggle,
+  // log navigation: called with a search string to jump to log view
+  onLogSearch,
 }) {
   const isMesh       = client.isMeshNode;
   const isDiscovered = client.connectionType === 'discovered';
@@ -34,8 +36,18 @@ export default function ClientTableCell({
   switch (col.id) {
     case 'mac':
       return (
-        <td className="px-3 py-2 font-mono text-xs text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis" style={style}>
-          {client.mac}
+        <td className="px-3 py-2 font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis" style={style}>
+          {client.mac ? (
+            <button
+              onClick={function() { if (onLogSearch) onLogSearch(client.mac); }}
+              title={'Show logs for ' + client.mac}
+              className="text-gray-300 hover:text-purple-300 transition-colors text-left"
+            >
+              {client.mac}
+            </button>
+          ) : (
+            <span className="text-gray-600">n/a</span>
+          )}
         </td>
       );
 
@@ -62,8 +74,18 @@ export default function ClientTableCell({
 
     case 'ip':
       return (
-        <td className="px-3 py-2 font-mono text-xs text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis" style={style}>
-          {client.ip || <span className="text-gray-600">n/a</span>}
+        <td className="px-3 py-2 font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis" style={style}>
+          {client.ip ? (
+            <button
+              onClick={function() { if (onLogSearch) onLogSearch(client.ip); }}
+              title={'Show logs for ' + client.ip}
+              className="text-gray-300 hover:text-green-300 transition-colors text-left"
+            >
+              {client.ip}
+            </button>
+          ) : (
+            <span className="text-gray-600">n/a</span>
+          )}
         </td>
       );
 
