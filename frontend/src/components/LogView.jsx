@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useLayoutEffect, useState } from 'react';
 
 const LEVEL_COLORS = {
   info:  'text-blue-300',
@@ -14,7 +14,9 @@ const LEVEL_BG = {
   debug: '',
 };
 
-// Split a plain-text segment into sub-parts: plain text, MAC, or IP tokens.
+// How close to the bottom (px) before we consider the user "at the bottom".
+const BOTTOM_THRESHOLD = 60;
+
 function splitTextTokens(text) {
   var parts = [];
   var re    = /\b([0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})\b|\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/gi;
@@ -33,10 +35,6 @@ function splitTextTokens(text) {
   return parts;
 }
 
-// Parse a log message.
-// Only the FIRST [TAG] token is made clickable (unit type).
-// Subsequent [TAG] tokens are rendered as plain text.
-// Within plain-text segments, MACs and IPs are detected and made clickable.
 function parseMsg(msg) {
   var parts     = [];
   var re        = /\[([^\]]+)\]/g;
@@ -63,12 +61,16 @@ function parseMsg(msg) {
 }
 
 export default function LogView({ logs, filter, onFilterChange, search, onSearchChange, onRequestHistory }) {
-  // autoScroll: true = follow tail; false = user scrolled up, paused
+  // autoScroll is the canonical source of truth.
+  // true  = follow tail (we pin to bottom after every render)
+  // false = user scrolled up, we leave the viewport alone
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef(null);
-  const bottomRef = useRef(null);
-  // Track whether the last scroll was programmatic so we don't fight ourselves
-  const programmaticScroll = useRef(false);
+
+  // We need to know whether the *next* scroll event is ours or the user's.
+  // We set this to true immediately before we programmatically set scrollTop,
+  // and clear it in the scroll handler.
+  const ownScrollRef = useRef(false);
 
   const filtered = logs.filter(function(entry) {
     if (filter !== 'all' && entry.level !== filter) return false;
@@ -76,32 +78,39 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     return true;
   });
 
-  // Scroll to bottom whenever new entries arrive and autoScroll is on.
-  useEffect(function() {
-    if (autoScroll && bottomRef.current) {
-      programmaticScroll.current = true;
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [logs, autoScroll]);
+  // After every render where autoScroll is on, instantly pin to the bottom.
+  // useLayoutEffect fires synchronously after DOM mutations, before the browser
+  // paints, so the scroll position is set before the user ever sees the frame.
+  // This is the only reliable way to keep up with rapid log activity.
+  useLayoutEffect(function() {
+    if (!autoScroll) return;
+    var el = scrollRef.current;
+    if (!el) return;
+    ownScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  });
 
-  // Detect user scroll: pause auto-scroll when scrolling up, resume at bottom.
   function handleScroll() {
-    if (programmaticScroll.current) {
-      programmaticScroll.current = false;
+    // If this scroll event was triggered by us, ignore it.
+    if (ownScrollRef.current) {
+      ownScrollRef.current = false;
       return;
     }
     var el = scrollRef.current;
     if (!el) return;
-    // Consider "at bottom" when within 40px of the end.
-    var atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    var distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    var atBottom = distFromBottom < BOTTOM_THRESHOLD;
     setAutoScroll(atBottom);
   }
 
-  function scrollToBottom() {
+  function resumeFollow() {
+    // Set state first so the layout effect fires on the next render and pins us.
     setAutoScroll(true);
-    if (bottomRef.current) {
-      programmaticScroll.current = true;
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+    // Also do an immediate jump so there is zero visible delay.
+    var el = scrollRef.current;
+    if (el) {
+      ownScrollRef.current = true;
+      el.scrollTop = el.scrollHeight;
     }
   }
 
@@ -113,7 +122,6 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     }
   }
 
-  // Clicking a token sets the search filter to that value; clicking again clears it.
   function handleTokenClick(value) {
     onSearchChange(search === value ? '' : value);
   }
@@ -124,7 +132,7 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
       <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-gray-300 mr-2">Log Output</h2>
 
-        {/* Level filter buttons */}
+        {/* Level filter */}
         <div className="flex gap-1">
           {['all', 'info', 'warn', 'error', 'debug'].map(function(lvl) {
             return (
@@ -184,14 +192,13 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
           )}
         </div>
 
-        {/* Auto-scroll indicator / resume button */}
+        {/* Follow indicator / Resume button */}
         {autoScroll ? (
-          <span className="text-xs text-gray-500 select-none">Following</span>
+          <span className="text-xs text-gray-500 select-none whitespace-nowrap">Following</span>
         ) : (
           <button
-            onClick={scrollToBottom}
-            className="text-xs px-2.5 py-1 rounded-md font-medium bg-blue-700/40 text-blue-300 hover:bg-blue-600/50 transition-colors"
-            title="Resume auto-scroll"
+            onClick={resumeFollow}
+            className="text-xs px-2.5 py-1 rounded-md font-medium bg-blue-700/40 text-blue-300 hover:bg-blue-600/60 transition-colors whitespace-nowrap"
           >
             Resume &darr;
           </button>
@@ -283,7 +290,6 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
             </div>
           );
         })}
-        <div ref={bottomRef} />
       </div>
 
       {/* Footer */}
@@ -292,7 +298,7 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
         {search && <span className="text-blue-500/70">filtered by &ldquo;{search}&rdquo;</span>}
         {!autoScroll && (
           <button
-            onClick={scrollToBottom}
+            onClick={resumeFollow}
             className="ml-auto text-blue-400 hover:text-blue-200 transition-colors"
           >
             Scroll to bottom &darr;
