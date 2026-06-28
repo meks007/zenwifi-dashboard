@@ -83,6 +83,36 @@ access_points:
     # driver: atheros
 
 # ---------------------------------------------------------------------------
+# Home Assistant MQTT Discovery (optional)
+# ---------------------------------------------------------------------------
+# When enabled, the backend publishes an MQTT Discovery payload for each
+# connected WiFi client. This adds a "Disconnect" button entity directly onto
+# the existing AsusRouter device in Home Assistant -- no duplicate devices are
+# created because the discovery payload identifies the device by MAC address,
+# which is the same connection key AsusRouter uses in the HA device registry.
+#
+# Prerequisites:
+#   - MQTT integration configured in Home Assistant (same broker as above)
+#   - AsusRouter custom integration installed and set up in HA
+#   - MQTT discovery enabled in HA (it is on by default)
+#
+# How it works:
+#   - On each poll, a retained "button" discovery config is published to:
+#       <prefix>/button/zenwifi_<mac>/config
+#   - Pressing the button in HA publishes to:
+#       <mqtt.topic_prefix>/clients/<mac>/disconnect
+#     which the dashboard backend already subscribes to and acts on via SSH.
+#   - The button is automatically unavailable when the client is offline.
+#   - When a client leaves the network the discovery config is cleared
+#     (empty retained payload) so the button is removed from HA.
+#
+# Remove this block or set enabled: false to disable entirely.
+# ---------------------------------------------------------------------------
+# ha_discovery:
+#   enabled: true
+#   prefix: homeassistant   # HA MQTT discovery prefix -- must match HA setting (default: homeassistant)
+
+# ---------------------------------------------------------------------------
 # OPNsense integration (optional)
 # ---------------------------------------------------------------------------
 # When configured, the backend queries OPNsense for:
