@@ -21,7 +21,8 @@ Supports:
   - RSSI
   - TX/RX byte counters (shown as `null` if the firmware does not expose them)
 - **AP status overview**: online/offline, client counts, last seen timestamp, and last error
-- **Live log view** (server log ring buffer)
+- **Live log view** (server log ring buffer, full viewport height)
+- **Version badge + GitHub link** in the header (version sourced dynamically from the backend)
 
 ### Mesh-aware behavior (AiMesh)
 
@@ -64,8 +65,10 @@ The backend runs periodic ICMP reachability checks against all discovered (non-W
 
 - **Multi-column sort**: click column headers to sort; Shift+click a column header to remove it from the sort order
 - **Active filter chips**: OUI, vendor, and AP facets are shown as removable chips above the table
+- **AP name pills**: access point names are shown as styled pill buttons with a status dot; clicking filters the table to that AP
 - **Search**: matches MAC, vendor, hostname, IP, AP name, "mesh node", and "discovered"
 - **Row badges**: mesh infrastructure rows show an "Infrastructure" badge; discovered rows show a "Discovered" badge
+- **Column settings**: toggle visible columns via an inline panel that unfolds below the header (works on mobile without overflowing the viewport)
 
 ### MQTT integration
 
@@ -99,6 +102,30 @@ promotes DHCP hostname/IP to the top-level fields when present.
 #### Neighbor Discovery (discovered clients)
 
 See [Discovered clients](#discovered-clients-opnsense-neighbor-discovery) above.
+
+---
+
+## Versioning
+
+The project version is maintained in a single place: **`backend/package.json`** (`"version"` field).
+
+- The backend reads this value at startup and broadcasts it to all WebSocket clients as part of every `clients` message.
+- The frontend displays the version badge in the header without any hardcoded constant -- it simply consumes `data.version` from the WebSocket payload.
+- The repository URL is sourced the same way from `backend/package.json` (`"repository".url`) and used to render the GitHub link in the header.
+
+To bump the version, update only `backend/package.json`. No frontend file changes are needed.
+
+---
+
+## Releases
+
+Releases follow [Semantic Versioning](https://semver.org/). The typical flow:
+
+1. Make and commit all code changes to `main`.
+2. Update the `"version"` field in `backend/package.json` (patch / minor / major as appropriate).
+3. Create a GitHub Release with tag `vMAJOR.MINOR.PATCH` targeting `main`, and paste the changelog as release notes.
+
+See [releases](https://github.com/meks007/zenwifi-dashboard/releases) for the full history.
 
 ---
 
@@ -335,6 +362,26 @@ Optional (only needed for reservation enrichment):
 
 `tx_bytes` / `rx_bytes` are `null` when the AP firmware does not expose per-client byte counters.
 
+### WebSocket clients payload
+
+Every connected frontend receives a `clients` message on connect and on every poll cycle:
+
+```json
+{
+  "type": "clients",
+  "clients": [...],
+  "apStatus": {...},
+  "mqttConnected": true,
+  "dbHealthy": true,
+  "version": "0.1.3",
+  "repoUrl": "https://github.com/meks007/zenwifi-dashboard",
+  "timestamp": "2026-06-28T09:00:00.000Z"
+}
+```
+
+`version` and `repoUrl` are read from `backend/package.json` at startup and require no frontend
+changes when the version is bumped.
+
 ### LWT
 
 The broker publishes `offline` to `{prefix}/bridge/state` (retained) if the backend process
@@ -399,6 +446,42 @@ The backend reads these once per poll cycle and uses them to:
 
 If an AP cannot be reached via SSH, its last known client list is retained until 3 consecutive
 poll failures occur. This prevents brief network interruptions from clearing the client list.
+
+---
+
+## Architecture
+
+```
+backend/
+  package.json        <- single source of truth for version and repository URL
+  Dockerfile          <- node:20-alpine; WORKDIR /app; runs src/index.js
+  src/
+    index.js          <- Express + WebSocket server; reads pkg from ../package.json
+    config.js         <- config.yaml loader
+    ssh.js            <- SSH client / AP polling
+    mqtt.js           <- MQTT bridge
+    opnsense.js       <- OPNsense REST + SSH integration
+    pinger.js         <- ICMP reachability checks
+    db.js             <- SQLite persistence
+    logger.js         <- ring-buffer logger with WebSocket broadcaster
+
+frontend/
+  src/
+    App.jsx           <- WebSocket client; reads version + repoUrl from WS payload
+    components/
+      ClientTable.jsx <- client list with sort, filter, AP pills, column toggle
+      LogView.jsx     <- live log view (full viewport height)
+      StatusBar.jsx   <- AP status overview
+```
+
+### Docker layout note
+
+The backend container sets `WORKDIR /app` and copies `src/` into `/app/src/`. The `package.json`
+therefore lives at `/app/package.json`, one level above `src/`. The require path in `index.js` is:
+
+```js
+const pkg = require('../package.json');
+```
 
 ---
 
