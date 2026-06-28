@@ -169,16 +169,16 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
   activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleVendor(v); } }); });
   activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleOui(v);    } }); });
 
-  // Desktop: card is 102% wide so the table (100% of card) always has room and
-  //   never causes a phantom horizontal scrollbar from sub-pixel rounding.
-  //   overflowX:auto on the card handles real horizontal scrolling when columns
-  //   exceed the viewport. The scroll div only scrolls vertically (overflow-y-auto),
-  //   which keeps position:sticky on thead working correctly.
+  // Desktop: card is 100% wide, overflow-x hidden so the right border and
+  //   scrollbar are never clipped by the parent container. The table uses
+  //   exact pixel column widths so there is no sub-pixel overflow to worry about.
+  //   The inner scroll div (overflow-y-auto) handles vertical scrolling and
+  //   keeps position:sticky on thead working correctly.
   // Mobile: card is 100% wide with overflowX:auto so the auto-layout table is
   //   contained inside the card and scrolls horizontally within it.
   const cardStyle = isMobile
     ? { width: '100%', minWidth: 0, overflowX: 'auto' }
-    : { width: '102%', minWidth: '400px', overflowX: 'auto' };
+    : { width: '100%', minWidth: '400px', overflowX: 'hidden' };
 
   // Desktop: thin themed scrollbar on the vertical scroll div.
   // Mobile: no style needed.
