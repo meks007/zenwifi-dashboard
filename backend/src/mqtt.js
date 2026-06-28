@@ -172,12 +172,8 @@ function publishDiscovery(mac, haDiscovery) {
   if (!mqttClient || !mqttClient.connected) return;
 
   // Normalise MAC to lowercase colon-separated (matches AsusRouter device registry key).
-  var normMac  = mac.toLowerCase().replace(/[^0-9a-f]/g, function (c, i) {
-    // Preserve separators at positions 2,5,8,11,14 -- rebuild cleanly instead.
-    return '';
-  });
-  // Rebuild as xx:xx:xx:xx:xx:xx
-  normMac = normMac.match(/.{1,2}/g).join(':');
+  var normMac  = mac.toLowerCase().replace(/[^0-9a-f]/g, '');
+  normMac      = normMac.match(/.{1,2}/g).join(':');
 
   var macSafe  = normMac.replace(/:/g, '_');
   var prefix   = getPrefix();
@@ -203,6 +199,7 @@ function publishDiscovery(mac, haDiscovery) {
     },
   };
 
+  console.log('[HA Discovery] Publishing button for ' + normMac + ' -> ' + configTopic);
   mqttClient.publish(configTopic, JSON.stringify(payload), { retain: true, qos: 1 });
 }
 
@@ -223,6 +220,8 @@ function unpublishDiscovery(mac, haDiscovery) {
   var haPrefix = haDiscovery.prefix || 'homeassistant';
 
   var configTopic = haPrefix + '/button/zenwifi_' + macSafe + '/config';
+
+  console.log('[HA Discovery] Clearing button for ' + normMac + ' -> ' + configTopic);
   mqttClient.publish(configTopic, '', { retain: true, qos: 1 });
 }
 
