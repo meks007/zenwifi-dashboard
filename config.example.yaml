@@ -30,9 +30,26 @@ polling_interval_seconds: 30
 # Default: 10
 iface_discovery_interval: 10
 
-# Size of the in-memory log ring buffer (number of log lines kept).
-# Older entries are dropped when the buffer is full. Default: 500.
-log_buffer_size: 500
+# ---------------------------------------------------------------------------
+# Log file (optional)
+# ---------------------------------------------------------------------------
+# When log_file is set, every log entry is appended to a rotating JSON-lines
+# file in addition to stdout. The file is the source of truth for history --
+# there is no separate in-memory ring buffer.
+#
+# The frontend requests the last log_tail_lines entries on connect and receives
+# all new entries live via WebSocket. It can also request more history at any
+# time (up to all rotated files) via the "Load more" button.
+#
+# GET /api/logs?n=200    -- HTTP endpoint for the last 200 lines
+# GET /api/logs?all=1    -- all lines across current + rotated files
+#
+# Omit log_file (or leave it empty) to disable file logging entirely.
+# ---------------------------------------------------------------------------
+# log_file: /data/logs/zenwifi.log   # path inside the container / on the host
+# log_file_max_bytes: 10485760        # rotate when file exceeds this size (default: 10 MB)
+# log_file_max_rotations: 3           # number of rotated files to keep (default: 3)
+# log_tail_lines: 100                 # lines sent to the frontend on WS connect (default: 100)
 
 # Set to true to log every SSH command and its output (very verbose).
 debug_logging: false
@@ -45,7 +62,6 @@ show_ipv6: false
 # 3 ICMP packets are sent per client. Clients that fail all 3 are hidden from the
 # frontend until they respond again. Default: 5.
 ping_interval_minutes: 5
-
 # How often (in minutes) to run the housekeeping task.
 # Housekeeping scans the database for client records that no longer correspond to
 # an active client. Each stale record triggers an MQTT offline publish (state +
@@ -81,7 +97,6 @@ access_points:
     username: admin
     password: secret
     # driver: atheros
-
 # ---------------------------------------------------------------------------
 # Home Assistant MQTT Discovery (optional)
 # ---------------------------------------------------------------------------
@@ -111,7 +126,6 @@ access_points:
 # ha_discovery:
 #   enabled: true
 #   prefix: homeassistant   # HA MQTT discovery prefix -- must match HA setting (default: homeassistant)
-
 # ---------------------------------------------------------------------------
 # OPNsense integration (optional)
 # ---------------------------------------------------------------------------
@@ -150,8 +164,7 @@ opnsense:
   username: root
   password: your-root-password
   # key_path: /run/secrets/opnsense_id_rsa   # path to private key (alternative to password)
-
-  # --- Polling ---
+# --- Polling ---
   poll_interval: 60         # How often (seconds) to refresh DHCP data
 
   # --- Neighbor Discovery (discovered client detection) ---
