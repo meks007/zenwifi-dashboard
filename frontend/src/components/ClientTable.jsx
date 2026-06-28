@@ -13,13 +13,13 @@ const DEFAULT_COLUMNS = [
   { id: 'tx_bytes',   label: 'TX',           defaultWidth: 80,  mobileVisible: false },
   { id: 'rx_bytes',   label: 'RX',           defaultWidth: 80,  mobileVisible: false },
   { id: 'first_seen', label: 'First Seen',   defaultWidth: 100, mobileVisible: false },
+  { id: 'reachable',  label: 'Reachable',    defaultWidth: 120, mobileVisible: false },
   { id: 'actions',    label: 'Actions',      defaultWidth: 120, mobileVisible: true  },
 ];
 
 const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
 const MOBILE_BP     = 640; // px, matches Tailwind sm:
-
 // matchMedia singleton -- avoids spurious breakpoint flips caused by mobile
 // browser chrome reflows (address bar, keyboard). The CSS engine drives this,
 // so it always agrees with what Tailwind's sm: breakpoint sees.
@@ -68,7 +68,6 @@ function saveColumnPrefs(cols) {
     ));
   } catch (_e) {}
 }
-
 function loadWidthPrefs() {
   try {
     const raw = localStorage.getItem(LS_WIDTHS_KEY);
@@ -131,7 +130,6 @@ function ipToInt(ip) {
   if (octets.some(function(o) { return isNaN(o) || o < 0 || o > 255; })) return null;
   return ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
 }
-
 function compareByKey(a, b, key) {
   if (key === 'ip') {
     const ai = ipToInt(a.ip), bi = ipToInt(b.ip);
@@ -143,6 +141,11 @@ function compareByKey(a, b, key) {
   if (key === 'first_seen') {
     const at = a.first_seen ? new Date(a.first_seen).getTime() : Infinity;
     const bt = b.first_seen ? new Date(b.first_seen).getTime() : Infinity;
+    return at < bt ? -1 : at > bt ? 1 : 0;
+  }
+  if (key === 'reachable') {
+    const at = a.last_ping_at ? new Date(a.last_ping_at).getTime() : 0;
+    const bt = b.last_ping_at ? new Date(b.last_ping_at).getTime() : 0;
     return at < bt ? -1 : at > bt ? 1 : 0;
   }
   const av = a[key] != null ? String(a[key]).toLowerCase() : '';
@@ -162,7 +165,6 @@ function fmtRelative(isoStr) {
   const d = Math.floor(h / 24);
   return d + 'd ago';
 }
-
 function fmtAbsolute(isoStr) {
   if (!isoStr) return '';
   return new Date(isoStr).toLocaleString();
@@ -213,7 +215,7 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
           {client.vendor}
         </button>
       ) : (
-        <span className="text-gray-600">n/a</span>
+<span className="text-gray-600">n/a</span>
       )}
     </span>
   );
@@ -225,8 +227,7 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
 function ColumnSettingsPanel({ columns, onChange, onClose }) {
   const dragIdx = useRef(null);
   const [localCols, setLocalCols] = useState(columns);
-
-  useEffect(function() { onChange(localCols); }, [localCols]);
+useEffect(function() { onChange(localCols); }, [localCols]);
 
   function toggleVisible(id) {
     setLocalCols(function(prev) {
@@ -303,7 +304,7 @@ return (
                   'w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
                   (col.visible ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-700 border-gray-600 text-transparent')
                 }
-                title={col.visible ? 'Hide on desktop' : 'Show on desktop'}
+title={col.visible ? 'Hide on desktop' : 'Show on desktop'}
               >
                 <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1 4l3 3 5-6"/>
@@ -341,8 +342,7 @@ return (
 function ResizeHandle({ onResize, onDone }) {
   const startX  = useRef(null);
   const startVal = useRef(null);
-
-  function onMouseDown(e) {
+function onMouseDown(e) {
     e.preventDefault();
     startX.current = e.clientX;
     startVal.current = 0;
@@ -370,8 +370,7 @@ function ResizeHandle({ onResize, onDone }) {
   );
 }
 
-const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
-
+const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen', 'reachable']);
 // ---- ClientTable ----
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch]               = useState('');
@@ -415,8 +414,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       return Object.assign({}, prev, { [colId]: Math.max(MIN_COL_WIDTH, cur + delta) });
     });
   }
-
-  function handleResizeDone() {
+function handleResizeDone() {
     setColWidths(function(w) { saveWidthPrefs(w); return w; });
   }
 
@@ -449,8 +447,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
       return next;
     });
   }
-
-  function toggleSort(key, e) {
+function toggleSort(key, e) {
     setSortCols(function(prev) {
       const single = e && e.shiftKey;
       const existing = prev.find(function(s) { return s.key === key; });
@@ -497,8 +494,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     setMeshOnly(false);
   }
 const q = search.trim().toLowerCase();
-
-  const filtered = clients.filter(function(c) {
+const filtered = clients.filter(function(c) {
     if (meshOnly && !c.isMeshNode) return false;
     if (q) {
       const hit =
@@ -629,6 +625,39 @@ case 'hostname':
           </td>
         );
 
+      case 'reachable': {
+        // Only meaningful for discovered (wired) clients that have been pinged.
+        if (!isDiscovered) {
+          return <td key="reachable" style={style} className="px-3 py-3 text-gray-700 text-xs">-</td>;
+        }
+        var pingRel    = fmtRelative(c.last_ping_at);
+        var pingResult = c.last_ping_result || null;
+        // Derive success from "X/Y" string -- success means X === Y and X > 0
+        var pingOk = false;
+        if (pingResult) {
+          var pingParts = pingResult.split('/');
+          pingOk = pingParts.length === 2 && pingParts[0] === pingParts[1] && parseInt(pingParts[0], 10) > 0;
+        }
+        return (
+          <td
+            key="reachable"
+            style={style}
+            className="px-3 py-3 text-xs overflow-hidden text-ellipsis whitespace-nowrap"
+            title={c.last_ping_at ? fmtAbsolute(c.last_ping_at) + ' - ' + (pingResult || '?') : 'Not yet pinged'}
+          >
+            {pingRel ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className={'w-1.5 h-1.5 rounded-full flex-shrink-0 ' + (pingOk ? 'bg-green-400' : 'bg-red-400')}></span>
+                <span className="text-gray-400">{pingRel}</span>
+                {pingResult && <span className={'font-mono ' + (pingOk ? 'text-green-400' : 'text-red-400')}>{pingResult}</span>}
+              </span>
+            ) : (
+              <span className="text-gray-600">pending</span>
+            )}
+          </td>
+        );
+      }
+
       case 'actions':
         return (
           <td key="actions" style={style} className="px-3 py-3 text-right overflow-hidden">
@@ -678,69 +707,64 @@ case 'hostname':
 
       {/* Toolbar */}
       <div className="flex-none px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
-            {isMobile && (
-              <span className="text-xs text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5">Mobile view</span>
-            )}
-            {!isDefaultSort && (
-              <button
-                onClick={resetSort}
-                className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
-                title="Reset to default sort"
-              >
-                Reset sort
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={function() { setShowSettings(function(v) { return !v; }); }}
-              title="Configure columns"
-              className={
-                'p-1.5 rounded-lg border transition-colors ' +
-                (showSettings
-                  ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
-                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
-              }
-            >
-              <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <rect x="1" y="2" width="4" height="12" rx="0.5"/>
-                <rect x="6" y="2" width="4" height="12" rx="0.5"/>
-                <rect x="11" y="2" width="4" height="12" rx="0.5"/>
-              </svg>
-            </button>
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.242 1.156a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z"/>
+            </svg>
             <input
               type="text"
-              placeholder="Search..."
               value={search}
               onChange={function(e) { setSearch(e.target.value); }}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-40 sm:w-64"
+              placeholder="Search clients..."
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500"
             />
-            {hasFilter && (
-              <button
-                onClick={clearAll}
-                title="Clear all filters"
-                className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
-              >
-                &times;
-              </button>
-            )}
           </div>
+          <button
+            onClick={function() { setShowSettings(function(v) { return !v; }); }}
+            title="Column settings"
+            className={'p-1.5 rounded-lg border transition-colors ' + (showSettings ? 'bg-blue-900/40 border-blue-600/50 text-blue-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')}
+          >
+            <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
+              <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+              <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.474l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+            </svg>
+          </button>
+          {!isDefaultSort && (
+            <button
+              onClick={resetSort}
+              title="Reset sort"
+              className="p-1.5 rounded-lg border bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
+            >
+              <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
+                <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+              </svg>
+            </button>
+          )}
+          {hasFilter && (
+            <button
+              onClick={clearAll}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors whitespace-nowrap"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
+
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {chips.map(function(chip, i) {
               return (
-                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
+                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-700/50 text-blue-300 text-xs rounded-full px-2 py-0.5">
                   {chip.label}
-                  <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
+                  <button onClick={chip.remove} className="text-blue-400 hover:text-blue-200 leading-none">&times;</button>
                 </span>
               );
             })}
           </div>
         )}
+
         {showSettings && (
           <ColumnSettingsPanel
             columns={columns}
@@ -750,55 +774,26 @@ case 'hostname':
         )}
       </div>
 
-      {/* Desktop: vertical scroll only -- horizontal overflow is handled by overflowX:auto
-          on the card. Using overflow-y-auto here (not overflow-auto) keeps position:sticky
-          on thead working and avoids phantom horizontal scrollbars.
-          Mobile: no overflow -- the page scrolls. */}
-      <div className={isMobile ? 'w-full' : 'flex-1 overflow-y-auto'} style={scrollDivStyle}>
-        <table
-          className="text-sm border-collapse"
-          style={isMobile
-            ? { tableLayout: 'auto', width: '100%' }
-            : { tableLayout: 'fixed', width: '100%' }
-          }
-        >
-          {!isMobile && (
-            <colgroup>
+      {/* Table scroll container */}
+      <div className="flex-1 overflow-y-auto" style={scrollDivStyle}>
+        <table style={{ width: tableWidth, tableLayout: isMobile ? 'auto' : 'fixed', borderCollapse: 'collapse' }}>
+          <thead className="sticky top-0 z-10 bg-gray-900">
+            <tr className="border-b border-gray-800">
               {visibleCols.map(function(col) {
-                return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
-              })}
-            </colgroup>
-          )}
-          <thead>
-            <tr
-              className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
-              style={{ position: 'sticky', top: 0, zIndex: 20 }}
-            >
-              {visibleCols.map(function(col) {
-                const sortable  = SORTABLE.has(col.id);
-                const isActive  = sortable && sortCols.some(function(s) { return s.key === col.id; });
-                const isActions = col.id === 'actions';
-                const thStyle   = isMobile
-                  ? { position: 'relative' }
-                  : (function() {
-                      const w = getWidth(col);
-                      return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' };
-                    })();
+                const sortable = SORTABLE.has(col.id);
+                const style    = isMobile ? {} : { width: getWidth(col) + 'px', minWidth: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px', position: 'relative' };
                 return (
                   <th
                     key={col.id}
-                    style={thStyle}
+                    style={style}
                     onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
                     className={
-                      'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
-                      (isActions ? 'text-right ' : 'text-left ') +
-                      (sortable ? 'cursor-pointer ' : '') +
-                      (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
+                      'px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider select-none overflow-hidden text-ellipsis whitespace-nowrap ' +
+                      (sortable ? 'cursor-pointer hover:text-gray-300' : '')
                     }
-                    title={sortable ? 'Click to sort (multi-column). Shift+click to sort by this column only.' : undefined}
                   >
-                    <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
-                    {!isMobile && (
+                    {col.label}{sortMark(col.id)}
+                    {!isMobile && sortable && (
                       <ResizeHandle
                         onResize={function(delta) { handleResize(col.id, delta); }}
                         onDone={handleResizeDone}
@@ -810,37 +805,36 @@ case 'hostname':
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && (
+            {sorted.length === 0 ? (
               <tr>
-                <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
-                  {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
+                <td colSpan={visibleCols.length} className="px-3 py-8 text-center text-gray-600 text-sm">
+                  {hasFilter ? 'No clients match the current filter.' : 'No clients connected.'}
                 </td>
               </tr>
+            ) : (
+              sorted.map(function(c) {
+                const isDisc    = c.connectionType === 'discovered';
+                const rowClass  = 'border-b border-gray-800/50 transition-colors ' +
+                  (isDisc ? 'hover:bg-amber-900/10' : c.isMeshNode ? 'hover:bg-indigo-900/10' : 'hover:bg-gray-800/40');
+                return (
+                  <tr key={c.mac} className={rowClass}>
+                    {visibleCols.map(function(col) { return renderCell(c, col); })}
+                  </tr>
+                );
+              })
             )}
-            {sorted.map(function(c) {
-              const isMeshRow = c.isMeshNode;
-              const isDisc    = c.connectionType === 'discovered';
-              return (
-                <tr
-                  key={c.mac}
-                  className={
-                    'border-b border-gray-800 last:border-0 transition-colors ' +
-                    (isMeshRow ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
-                     isDisc    ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
-                                 'hover:bg-gray-800/50')
-                  }
-                >
-                  {visibleCols.map(function(col) { return renderCell(c, col); })}
-                </tr>
-              );
-            })}
           </tbody>
         </table>
       </div>
 
       {/* Footer */}
-      <div className="flex-none px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
-        Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
+      <div className="flex-none px-4 py-2 border-t border-gray-800 flex items-center justify-between">
+        <span className="text-xs text-gray-600">
+          {sorted.length === clients.length
+            ? clients.length + ' client' + (clients.length !== 1 ? 's' : '')
+            : sorted.length + ' of ' + clients.length + ' clients'}
+        </span>
+        <span className="text-xs text-gray-700">Shift+click column header for single-column sort</span>
       </div>
     </div>
   );
