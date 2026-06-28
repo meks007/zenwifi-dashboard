@@ -1,4 +1,6 @@
-const fs = require('fs');
+'use strict';
+
+const fs   = require('fs');
 const yaml = require('js-yaml');
 const path = require('path');
 
@@ -14,4 +16,21 @@ function loadConfig() {
   }
 }
 
-module.exports = { loadConfig };
+/**
+ * Returns a normalised ha_discovery config object, or null when disabled.
+ *
+ * Supported config.yaml shape:
+ *   ha_discovery:
+ *     enabled: true          # default: false
+ *     prefix: homeassistant  # default: "homeassistant"
+ */
+function getHaDiscoveryConfig(cfg) {
+  var hd = cfg && cfg.ha_discovery;
+  if (!hd || !hd.enabled) return null;
+  return {
+    enabled: true,
+    prefix:  (typeof hd.prefix === 'string' && hd.prefix.length) ? hd.prefix : 'homeassistant',
+  };
+}
+
+module.exports = { loadConfig, getHaDiscoveryConfig };
