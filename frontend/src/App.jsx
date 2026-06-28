@@ -104,10 +104,9 @@ export default function App() {
   ];
 
   return (
-    // 100dvh (dynamic viewport height) correctly excludes the mobile browser
-    // chrome (address bar, tab bar) so the layout fills exactly the visible
-    // area. This gives the table scroll div maximum usable height on mobile.
-    <div className="flex flex-col overflow-hidden bg-gray-950 text-gray-100 font-sans" style={{ height: '100dvh' }}>
+    // Desktop (sm+): locked to screen height, internal scroll only.
+    // Mobile: min-h-screen, no height lock -- the page scrolls naturally.
+    <div className="flex flex-col bg-gray-950 text-gray-100 font-sans min-h-screen sm:h-screen sm:overflow-hidden">
       <header className="flex-none bg-gray-900 border-b border-gray-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">ZW</div>
@@ -118,7 +117,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col overflow-hidden px-4 pt-3">
+      <main className="flex-1 flex flex-col sm:overflow-hidden px-4 pt-3">
         <div className="flex-none">
           <StatusBar
             wsConnected={wsConnected}
@@ -148,10 +147,9 @@ export default function App() {
           })}
         </div>
 
-        {/* flex-1 overflow-hidden gives the tab area a bounded height.
-            justify-center centers the card horizontally. py-3 keeps a small
-            breathing gap above and below the card without wasting space. */}
-        <div className="flex-1 overflow-hidden py-3 flex justify-center">
+        {/* Desktop: flex-1 + sm:overflow-hidden bounds the content to the viewport.
+            Mobile: height is unconstrained, the page scrolls naturally. */}
+        <div className="flex-1 sm:overflow-hidden py-3 flex justify-center">
           {activeTab === 'clients' && (
             <ClientTable
               clients={clients}
