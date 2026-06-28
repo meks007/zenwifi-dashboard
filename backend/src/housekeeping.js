@@ -15,11 +15,16 @@ const logger = require('./logger');
 // This catches records that were not cleaned up at runtime -- for example
 // when the server was restarted while a client was already offline.
 //
+// The first run is intentionally delayed by one full interval so that at
+// least one poll cycle and one ping cycle have completed before housekeeping
+// compares the DB against the active client set. Running too early would
+// cause all persisted records to look stale and get evicted incorrectly.
+//
 // Public API:
 //   housekeeping.run(getCurrentClients, mqttPublish, topicPrefix)
 //
 //   housekeeping.start(intervalMinutes, getCurrentClients, mqttPublish, topicPrefix)
-//     Runs once shortly after startup, then on a fixed interval.
+//     Waits one full interval, then runs on that same interval forever.
 // ---------------------------------------------------------------------------
 
 function run(getCurrentClients, mqttPublish, topicPrefix) {
@@ -64,17 +69,12 @@ function run(getCurrentClients, mqttPublish, topicPrefix) {
  */
 function start(intervalMinutes, getCurrentClients, mqttPublish, topicPrefix) {
   var mins = intervalMinutes || 60;
-  logger.info('[Housekeeping] Starting; will scan for stale DB records every ' + mins + ' minute(s)');
-
-  // Delay the first run slightly so the initial poll has time to populate
-  // currentClients before we compare against it.
-  setTimeout(function() {
-    run(getCurrentClients, mqttPublish, topicPrefix);
-  }, 10000);
+  var ms   = mins * 60 * 1000;
+  logger.info('[Housekeeping] Starting; first run in ' + mins + ' minute(s), then every ' + mins + ' minute(s)');
 
   setInterval(function() {
     run(getCurrentClients, mqttPublish, topicPrefix);
-  }, mins * 60 * 1000);
+  }, ms);
 }
 
 module.exports = { run, start };
