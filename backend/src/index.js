@@ -64,7 +64,6 @@ function broadcastState() {
     timestamp: new Date().toISOString(),
   });
 }
-
 function isIpv6(ip) {
   return typeof ip === 'string' && ip.indexOf(':') !== -1;
 }
@@ -118,8 +117,7 @@ async function poll() {
   let meshMap = new Map();
   let nodeGroups = new Map();
   let neighMap = {};
-
-  if (masterAp) {
+if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
@@ -131,8 +129,7 @@ async function poll() {
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
-
-  await Promise.allSettled(aps.map(async function(ap) {
+await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(
         ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval
@@ -167,8 +164,7 @@ async function poll() {
       }
     }
   }));
-
-  const enriched = allRawClients.map(function(c) {
+const enriched = allRawClients.map(function(c) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
   const collapsed = collapseMeshNodes(enriched);
@@ -213,8 +209,7 @@ async function poll() {
     if (discoveredRows.length > 0) {
       logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     }
-
-    pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
+pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
     allClients = dhcpEnriched.concat(discoveredRows);
   }
@@ -238,6 +233,20 @@ async function poll() {
     });
     freshClients.forEach(function(c, mac) {
       c.first_seen = db.getFirstSeen(mac) || null;
+
+      // Attach last ping data for discovered clients.
+      if (c.connectionType === 'discovered') {
+        var ps = pinger.getStatus(mac);
+        if (ps) {
+          c.last_ping_at     = ps.last_ping_at     || null;
+          c.last_ping_result = ps.last_ping_result || null;
+        } else {
+          // Fall back to DB value (survives backend restarts).
+          var dbPing = db.getLastPing(mac);
+          c.last_ping_at     = dbPing ? dbPing.last_ping_at     : null;
+          c.last_ping_result = dbPing ? dbPing.last_ping_result : null;
+        }
+      }
     });
     if (!dbHealthy) {
       dbHealthy = true;
@@ -257,7 +266,6 @@ async function poll() {
   mqttModule.publishClientStates(prevClients, currentClients, apStatus);
   broadcastState();
 }
-
 async function handleDisconnect(mac) {
   const c = currentClients.get(mac);
   if (!c) {
@@ -330,7 +338,6 @@ logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
 logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
-
 const preloaded = db.loadAll();
 logger.info('[DB] Loaded ' + preloaded.size + ' persisted first_seen record(s)');
 
