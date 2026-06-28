@@ -1,4 +1,4 @@
-export default function StatusBar({ wsConnected, mqttConnected, dbHealthy, apStatus, clientCount }) {
+export default function StatusBar({ wsConnected, mqttConnected, dbHealthy, apStatus, clientCount, debugMode, onToggleDebug }) {
   const apEntries = Object.entries(apStatus || {});
 
   function dot(ok) {
@@ -8,7 +8,7 @@ export default function StatusBar({ wsConnected, mqttConnected, dbHealthy, apSta
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
 
       <div className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3 flex items-center gap-3">
         <span className={dot(wsConnected)}></span>
@@ -59,6 +59,30 @@ export default function StatusBar({ wsConnected, mqttConnected, dbHealthy, apSta
             );
           })}
         </div>
+      </div>
+
+      <div className="bg-gray-900 rounded-xl border border-gray-800 px-4 py-3 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs text-gray-500 uppercase tracking-wide">Debug Logging</div>
+          <div className={"text-sm font-medium " + (debugMode ? "text-yellow-400" : "text-gray-400")}>
+            {debugMode ? "Enabled" : "Disabled"}
+          </div>
+        </div>
+        <button
+          onClick={onToggleDebug}
+          title={debugMode ? "Disable debug logging" : "Enable debug logging"}
+          className={
+            "relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none " +
+            (debugMode ? "bg-yellow-500" : "bg-gray-700")
+          }
+        >
+          <span
+            className={
+              "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform duration-200 " +
+              (debugMode ? "translate-x-5" : "translate-x-0")
+            }
+          />
+        </button>
       </div>
 
     </div>
