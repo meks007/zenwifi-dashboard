@@ -1,23 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 // ---- Column definitions ----
-// Default widths are in pixels. Stored widths override them via localStorage.
+// defaultWidth in px. mobileVisible controls which columns show on narrow screens.
 const DEFAULT_COLUMNS = [
-  { id: 'mac',        label: 'MAC Address',  defaultWidth: 140 },
-  { id: 'vendor',     label: 'Vendor',       defaultWidth: 200 },
-  { id: 'hostname',   label: 'Hostname',     defaultWidth: 160 },
-  { id: 'ip',         label: 'IP Address',   defaultWidth: 120 },
-  { id: 'apName',     label: 'Access Point', defaultWidth: 160 },
-  { id: 'iface',      label: 'Interface',    defaultWidth: 90  },
-  { id: 'rssi',       label: 'RSSI (dBm)',   defaultWidth: 90  },
-  { id: 'tx_bytes',   label: 'TX',           defaultWidth: 80  },
-  { id: 'rx_bytes',   label: 'RX',           defaultWidth: 80  },
-  { id: 'first_seen', label: 'First Seen',   defaultWidth: 100 },
-  { id: 'actions',    label: 'Actions',      defaultWidth: 120 },
+  { id: 'mac',        label: 'MAC Address',  defaultWidth: 140, mobileVisible: true  },
+  { id: 'vendor',     label: 'Vendor',       defaultWidth: 200, mobileVisible: false },
+  { id: 'hostname',   label: 'Hostname',     defaultWidth: 160, mobileVisible: true  },
+  { id: 'ip',         label: 'IP Address',   defaultWidth: 120, mobileVisible: true  },
+  { id: 'apName',     label: 'Access Point', defaultWidth: 160, mobileVisible: false },
+  { id: 'iface',      label: 'Interface',    defaultWidth: 90,  mobileVisible: false },
+  { id: 'rssi',       label: 'RSSI (dBm)',   defaultWidth: 90,  mobileVisible: true  },
+  { id: 'tx_bytes',   label: 'TX',           defaultWidth: 80,  mobileVisible: false },
+  { id: 'rx_bytes',   label: 'RX',           defaultWidth: 80,  mobileVisible: false },
+  { id: 'first_seen', label: 'First Seen',   defaultWidth: 100, mobileVisible: false },
+  { id: 'actions',    label: 'Actions',      defaultWidth: 120, mobileVisible: true  },
 ];
 
 const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
+const MOBILE_BP     = 640; // px, matches Tailwind sm:
 
 function loadColumnPrefs() {
   try {
@@ -27,9 +28,15 @@ function loadColumnPrefs() {
     if (!Array.isArray(saved)) return null;
     const savedMap = new Map(saved.map(function(c) { return [c.id, c]; }));
     const merged = DEFAULT_COLUMNS.map(function(def) {
-      return savedMap.has(def.id)
-        ? { id: def.id, label: def.label, defaultWidth: def.defaultWidth, visible: savedMap.get(def.id).visible }
-        : { id: def.id, label: def.label, defaultWidth: def.defaultWidth, visible: true };
+      const s = savedMap.get(def.id);
+      if (!s) return { id: def.id, label: def.label, defaultWidth: def.defaultWidth, visible: true, mobileVisible: def.mobileVisible };
+      return {
+        id:            def.id,
+        label:         def.label,
+        defaultWidth:  def.defaultWidth,
+        visible:       s.visible !== undefined       ? s.visible       : true,
+        mobileVisible: s.mobileVisible !== undefined ? s.mobileVisible : def.mobileVisible,
+      };
     });
     const savedOrder = saved.map(function(c) { return c.id; }).filter(function(id) {
       return merged.some(function(m) { return m.id === id; });
@@ -47,7 +54,7 @@ function loadColumnPrefs() {
 function saveColumnPrefs(cols) {
   try {
     localStorage.setItem(LS_COLS_KEY, JSON.stringify(
-      cols.map(function(c) { return { id: c.id, visible: c.visible }; })
+      cols.map(function(c) { return { id: c.id, visible: c.visible, mobileVisible: c.mobileVisible }; })
     ));
   } catch (_e) {}
 }
@@ -55,20 +62,16 @@ function saveColumnPrefs(cols) {
 function loadWidthPrefs() {
   try {
     const raw = localStorage.getItem(LS_WIDTHS_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) || {};
-  } catch (_e) {
-    return {};
-  }
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch (_e) { return {}; }
 }
 
 function saveWidthPrefs(widths) {
-  try {
-    localStorage.setItem(LS_WIDTHS_KEY, JSON.stringify(widths));
-  } catch (_e) {}
+  try { localStorage.setItem(LS_WIDTHS_KEY, JSON.stringify(widths)); } catch (_e) {}
 }
 
 const DEFAULT_SORT = [{ key: 'ip', dir: 'asc' }];
+const MIN_COL_WIDTH = 50;
 
 // ---- Helpers ----
 
@@ -161,8 +164,8 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
       </button>
     );
   }
-  const oui        = macOui(client.mac);
-  const ouiActive  = oui && activeOuis.has(oui);
+  const oui          = macOui(client.mac);
+  const ouiActive    = oui && activeOuis.has(oui);
   const vendorActive = client.vendor && activeVendors.has(client.vendor);
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -184,10 +187,7 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
         <button
           onClick={function(e) { e.stopPropagation(); onVendorClick(client.vendor); }}
           title={'Filter by vendor: ' + client.vendor}
-          className={
-            'text-xs text-left transition-colors ' +
-            (vendorActive ? 'text-blue-300' : 'text-gray-400 hover:text-blue-300')
-          }
+          className={'text-xs text-left transition-colors ' + (vendorActive ? 'text-blue-300' : 'text-gray-400 hover:text-blue-300')}
         >
           {client.vendor}
         </button>
@@ -199,6 +199,7 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
 }
 
 // ---- ColumnSettingsPanel ----
+// Each row has two checkboxes: desktop visibility and mobile visibility.
 
 function ColumnSettingsPanel({ columns, onChange, onClose }) {
   const dragIdx = useRef(null);
@@ -214,6 +215,14 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
     });
   }
 
+  function toggleMobileVisible(id) {
+    setLocalCols(function(prev) {
+      return prev.map(function(c) {
+        return c.id === id ? Object.assign({}, c, { mobileVisible: !c.mobileVisible }) : c;
+      });
+    });
+  }
+
   function onDragStart(e, idx) {
     dragIdx.current = idx;
     e.dataTransfer.effectAllowed = 'move';
@@ -223,7 +232,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
     e.preventDefault();
     if (dragIdx.current === null || dragIdx.current === idx) return;
     setLocalCols(function(prev) {
-      const next = prev.slice();
+      const next  = prev.slice();
       const moved = next.splice(dragIdx.current, 1)[0];
       next.splice(idx, 0, moved);
       dragIdx.current = idx;
@@ -235,18 +244,23 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
 
   function resetToDefault() {
     setLocalCols(DEFAULT_COLUMNS.map(function(c) {
-      return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true };
+      return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true, mobileVisible: c.mobileVisible };
     }));
   }
 
   return (
-    <div className="absolute right-0 top-8 z-50 w-64 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
-      <div className="flex items-center justify-between mb-3">
+    <div className="absolute right-0 top-8 z-50 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
+      <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
         <div className="flex gap-2 items-center">
           <button onClick={resetToDefault} className="text-xs text-gray-500 hover:text-gray-300 transition-colors" title="Reset to default">Reset</button>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none" title="Close">&times;</button>
         </div>
+      </div>
+      <div className="flex items-center gap-2 mb-2 px-2">
+        <span className="text-xs text-gray-600 flex-1 pl-6">Column</span>
+        <span className="text-xs text-gray-500 w-12 text-center" title="Visible on desktop">Desktop</span>
+        <span className="text-xs text-gray-500 w-12 text-center" title="Visible on mobile">Mobile</span>
       </div>
       <ul className="space-y-1">
         {localCols.map(function(col, idx) {
@@ -260,31 +274,51 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
               className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-800 cursor-grab active:cursor-grabbing group"
             >
               <span className="text-gray-600 group-hover:text-gray-400 transition-colors text-xs leading-none">::</span>
+              <span className={'text-xs flex-1 ' + (col.visible || col.mobileVisible ? 'text-gray-200' : 'text-gray-500')}>
+                {col.label}
+              </span>
               <button
                 onClick={function() { toggleVisible(col.id); }}
                 className={
-                  'w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
+                  'w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
                   (col.visible ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-700 border-gray-600 text-transparent')
                 }
-                title={col.visible ? 'Hide column' : 'Show column'}
+                title={col.visible ? 'Hide on desktop' : 'Show on desktop'}
               >
                 <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1 4l3 3 5-6"/>
                 </svg>
               </button>
-              <span className={'text-xs flex-1 ' + (col.visible ? 'text-gray-200' : 'text-gray-500')}>{col.label}</span>
+              <button
+                onClick={function() { toggleMobileVisible(col.id); }}
+                className={
+                  'w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
+                  (col.mobileVisible ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-gray-700 border-gray-600 text-transparent')
+                }
+                title={col.mobileVisible ? 'Hide on mobile' : 'Show on mobile'}
+              >
+                <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M1 4l3 3 5-6"/>
+                </svg>
+              </button>
             </li>
           );
         })}
       </ul>
-      <p className="mt-3 text-xs text-gray-600 text-center">Drag rows to reorder</p>
+      <div className="flex items-center gap-4 mt-2 px-2">
+        <span className="flex items-center gap-1 text-xs text-gray-600">
+          <span className="inline-block w-3 h-3 rounded bg-blue-600 border border-blue-500"></span> Desktop
+        </span>
+        <span className="flex items-center gap-1 text-xs text-gray-600">
+          <span className="inline-block w-3 h-3 rounded bg-emerald-600 border border-emerald-500"></span> Mobile
+        </span>
+        <span className="text-xs text-gray-600 flex-1 text-right">Drag to reorder</span>
+      </div>
     </div>
   );
 }
 
 // ---- ResizeHandle ----
-// Draggable handle rendered at the right edge of each <th>.
-// Calls onResize(delta) as the user drags, onDone() when released.
 
 function ResizeHandle({ onResize, onDone }) {
   const startX = useRef(null);
@@ -293,7 +327,6 @@ function ResizeHandle({ onResize, onDone }) {
     e.preventDefault();
     e.stopPropagation();
     startX.current = e.clientX;
-
     function onMove(ev) {
       onResize(ev.clientX - startX.current);
       startX.current = ev.clientX;
@@ -310,60 +343,59 @@ function ResizeHandle({ onResize, onDone }) {
   return (
     <span
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group/rh select-none"
-      title="Drag to resize column"
+      className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group/rh select-none z-10"
+      title="Drag to resize"
     >
       <span className="w-px h-4 bg-gray-700 group-hover/rh:bg-blue-500 transition-colors rounded-full"></span>
     </span>
   );
 }
 
+// ---- Sortable column ids (actions excluded) ----
 const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
-const MIN_COL_WIDTH = 50;
 
 // ---- ClientTable ----
 
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
-  const [search, setSearch]           = useState('');
-  const [sortCols, setSortCols]       = useState(DEFAULT_SORT);
-  const [activeAps, setActiveAps]     = useState(new Set());
+  const [search, setSearch]               = useState('');
+  const [sortCols, setSortCols]           = useState(DEFAULT_SORT);
+  const [activeAps, setActiveAps]         = useState(new Set());
   const [activeVendors, setActiveVendors] = useState(new Set());
-  const [activeOuis, setActiveOuis]   = useState(new Set());
-  const [meshOnly, setMeshOnly]       = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
+  const [activeOuis, setActiveOuis]       = useState(new Set());
+  const [meshOnly, setMeshOnly]           = useState(false);
+  const [showSettings, setShowSettings]   = useState(false);
   const settingsRef = useRef(null);
+
+  // Detect mobile breakpoint reactively.
+  const [isMobile, setIsMobile] = useState(function() { return window.innerWidth < MOBILE_BP; });
+  useEffect(function() {
+    function onResize() { setIsMobile(window.innerWidth < MOBILE_BP); }
+    window.addEventListener('resize', onResize);
+    return function() { window.removeEventListener('resize', onResize); };
+  }, []);
 
   const [columns, setColumns] = useState(function() {
     const saved = loadColumnPrefs();
     if (saved) return saved;
     return DEFAULT_COLUMNS.map(function(c) {
-      return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true };
+      return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true, mobileVisible: c.mobileVisible };
     });
   });
 
-  // colWidths: map of id -> px width (current session, not yet saved)
-  const [colWidths, setColWidths] = useState(function() {
-    return loadWidthPrefs();
-  });
+  const [colWidths, setColWidths] = useState(loadWidthPrefs);
 
-  function getWidth(col) {
-    return colWidths[col.id] || col.defaultWidth;
-  }
+  function getWidth(col) { return colWidths[col.id] || col.defaultWidth; }
 
   function handleResize(colId, delta) {
     setColWidths(function(prev) {
-      const currentDef = DEFAULT_COLUMNS.find(function(c) { return c.id === colId; });
-      const current = prev[colId] || (currentDef ? currentDef.defaultWidth : 100);
-      const next = Math.max(MIN_COL_WIDTH, current + delta);
-      return Object.assign({}, prev, { [colId]: next });
+      const def = DEFAULT_COLUMNS.find(function(c) { return c.id === colId; });
+      const cur = prev[colId] || (def ? def.defaultWidth : 100);
+      return Object.assign({}, prev, { [colId]: Math.max(MIN_COL_WIDTH, cur + delta) });
     });
   }
 
   function handleResizeDone() {
-    setColWidths(function(w) {
-      saveWidthPrefs(w);
-      return w;
-    });
+    setColWidths(function(w) { saveWidthPrefs(w); return w; });
   }
 
   useEffect(function() { saveColumnPrefs(columns); }, [columns]);
@@ -371,22 +403,26 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   useEffect(function() {
     if (!showSettings) return;
     function handler(e) {
-      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
-        setShowSettings(false);
-      }
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) setShowSettings(false);
     }
     document.addEventListener('mousedown', handler);
     return function() { document.removeEventListener('mousedown', handler); };
   }, [showSettings]);
 
-  // Refresh relative timestamps every 30 seconds.
+  // Refresh relative timestamps every 30 s.
   const [, setTick] = useState(0);
   useEffect(function() {
     const id = setInterval(function() { setTick(function(n) { return n + 1; }); }, 30000);
     return function() { clearInterval(id); };
   }, []);
 
-  const visibleCols = columns.filter(function(c) { return c.visible; });
+  // Which columns to show depends on the current breakpoint.
+  const visibleCols = columns.filter(function(c) {
+    return isMobile ? c.mobileVisible : c.visible;
+  });
+
+  // Total table width (px) = sum of visible column widths.
+  const tableWidth = visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
 
   function toggleFacet(setter, value) {
     setter(function(prev) {
@@ -474,7 +510,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     const isDiscovered = c.connectionType === 'discovered';
     const isMesh       = c.isMeshNode;
     const w            = getWidth(col);
-    const style        = { width: w, minWidth: w, maxWidth: w };
+    const style        = { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' };
 
     switch (col.id) {
       case 'mac':
@@ -557,7 +593,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
       case 'first_seen':
         return (
-          <td key="first_seen" style={style} className="px-3 py-3 text-xs text-gray-400 whitespace-nowrap overflow-hidden text-ellipsis" title={fmtAbsolute(c.first_seen)}>
+          <td key="first_seen" style={style} className="px-3 py-3 text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap" title={fmtAbsolute(c.first_seen)}>
             {c.first_seen ? fmtRelative(c.first_seen) : <span className="text-gray-600">n/a</span>}
           </td>
         );
@@ -591,153 +627,168 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden w-full">
+  // The outer card uses inline-block + mx-auto so its width exactly matches the table.
+  // tableWidth is the JS-computed sum of visible column widths.
+  const cardStyle = { width: tableWidth + 'px' };
 
-      {/* Toolbar */}
-      <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
-            {!isDefaultSort && (
-              <button
-                onClick={resetSort}
-                className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
-                title="Reset to default sort"
-              >
-                Reset sort
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="relative" ref={settingsRef}>
-              <button
-                onClick={function() { setShowSettings(function(v) { return !v; }); }}
-                title="Configure columns"
-                className={
-                  'p-1.5 rounded-lg border transition-colors ' +
-                  (showSettings
-                    ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
-                }
-              >
-                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="1" y="2" width="4" height="12" rx="0.5"/>
-                  <rect x="6" y="2" width="4" height="12" rx="0.5"/>
-                  <rect x="11" y="2" width="4" height="12" rx="0.5"/>
-                </svg>
-              </button>
-              {showSettings && (
-                <ColumnSettingsPanel
-                  columns={columns}
-                  onChange={setColumns}
-                  onClose={function() { setShowSettings(false); }}
-                />
+  return (
+    <div className="flex justify-center w-full">
+      <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden" style={cardStyle}>
+
+        {/* Toolbar - same width as the card */}
+        <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
+              {isMobile && (
+                <span className="text-xs text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5">Mobile view</span>
+              )}
+              {!isDefaultSort && (
+                <button
+                  onClick={resetSort}
+                  className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
+                  title="Reset to default sort"
+                >
+                  Reset sort
+                </button>
               )}
             </div>
-            <div className="relative flex items-center sm:w-80">
+            <div className="flex items-center gap-2">
+              <div className="relative" ref={settingsRef}>
+                <button
+                  onClick={function() { setShowSettings(function(v) { return !v; }); }}
+                  title="Configure columns"
+                  className={
+                    'p-1.5 rounded-lg border transition-colors ' +
+                    (showSettings
+                      ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
+                  }
+                >
+                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <rect x="1" y="2" width="4" height="12" rx="0.5"/>
+                    <rect x="6" y="2" width="4" height="12" rx="0.5"/>
+                    <rect x="11" y="2" width="4" height="12" rx="0.5"/>
+                  </svg>
+                </button>
+                {showSettings && (
+                  <ColumnSettingsPanel
+                    columns={columns}
+                    onChange={setColumns}
+                    onClose={function() { setShowSettings(false); }}
+                  />
+                )}
+              </div>
               <input
                 type="text"
-                placeholder="Search MAC, vendor, hostname, IP, AP..."
+                placeholder="Search..."
                 value={search}
                 onChange={function(e) { setSearch(e.target.value); }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full pr-8"
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-40 sm:w-64"
               />
               {hasFilter && (
                 <button
                   onClick={clearAll}
                   title="Clear all filters"
-                  className="absolute right-2 text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
+                  className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
                 >
                   &times;
                 </button>
               )}
             </div>
           </div>
-        </div>
-        {chips.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {chips.map(function(chip, i) {
-              return (
-                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
-                  {chip.label}
-                  <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
-                </span>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Table - scrolls horizontally to fit its own content; outer card stretches to fill available space */}
-      <div className="overflow-x-auto">
-        <table className="text-sm border-collapse" style={{ tableLayout: 'fixed', width: visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0) + 'px' }}>
-          <colgroup>
-            {visibleCols.map(function(col) {
-              return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
-            })}
-          </colgroup>
-          <thead>
-            <tr className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800">
-              {visibleCols.map(function(col) {
-                const sortable    = SORTABLE.has(col.id);
-                const isActive    = sortable && sortCols.some(function(s) { return s.key === col.id; });
-                const isActions   = col.id === 'actions';
-                const w           = getWidth(col);
+          {chips.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {chips.map(function(chip, i) {
                 return (
-                  <th
-                    key={col.id}
-                    style={{ width: w, minWidth: w, maxWidth: w, position: 'relative' }}
-                    onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
-                    className={
-                      'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
-                      (isActions ? 'text-right ' : 'text-left ') +
-                      (sortable ? 'cursor-pointer ' : '') +
-                      (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
-                    }
-                    title={sortable ? 'Click to sort. Shift+click to add/remove from multi-sort.' : undefined}
-                  >
-                    <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
-                    <ResizeHandle
-                      onResize={function(delta) { handleResize(col.id, delta); }}
-                      onDone={handleResizeDone}
-                    />
-                  </th>
+                  <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
+                    {chip.label}
+                    <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
+                  </span>
                 );
               })}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.length === 0 && (
-              <tr>
-                <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
-                  {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
-                </td>
-              </tr>
-            )}
-            {sorted.map(function(c) {
-              const isMesh       = c.isMeshNode;
-              const isDiscovered = c.connectionType === 'discovered';
-              return (
-                <tr
-                  key={c.mac}
-                  className={
-                    'border-b border-gray-800 last:border-0 transition-colors ' +
-                    (isMesh       ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
-                     isDiscovered ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
-                                    'hover:bg-gray-800/50')
-                  }
-                >
-                  {visibleCols.map(function(col) { return renderCell(c, col); })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+            </div>
+          )}
+        </div>
 
-      <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
-        Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
+        {/* Table - overflows horizontally if viewport is narrower than tableWidth.
+            The sticky header sticks relative to the page scroll (not this overflow container)
+            because overflow-x alone does not create a new scroll context for the Y axis. */}
+        <div style={{ overflowX: 'auto' }}>
+          <table
+            className="text-sm border-collapse"
+            style={{ tableLayout: 'fixed', width: tableWidth + 'px' }}
+          >
+            <colgroup>
+              {visibleCols.map(function(col) {
+                return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
+              })}
+            </colgroup>
+            <thead>
+              <tr
+                className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
+                style={{ position: 'sticky', top: 0, zIndex: 20 }}
+              >
+                {visibleCols.map(function(col) {
+                  const sortable  = SORTABLE.has(col.id);
+                  const isActive  = sortable && sortCols.some(function(s) { return s.key === col.id; });
+                  const isActions = col.id === 'actions';
+                  const w         = getWidth(col);
+                  return (
+                    <th
+                      key={col.id}
+                      style={{ width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' }}
+                      onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
+                      className={
+                        'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
+                        (isActions ? 'text-right ' : 'text-left ') +
+                        (sortable ? 'cursor-pointer ' : '') +
+                        (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
+                      }
+                      title={sortable ? 'Click to sort. Shift+click for multi-sort.' : undefined}
+                    >
+                      <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
+                      <ResizeHandle
+                        onResize={function(delta) { handleResize(col.id, delta); }}
+                        onDone={handleResizeDone}
+                      />
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
+                    {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
+                  </td>
+                </tr>
+              )}
+              {sorted.map(function(c) {
+                const isMeshRow  = c.isMeshNode;
+                const isDisc     = c.connectionType === 'discovered';
+                return (
+                  <tr
+                    key={c.mac}
+                    className={
+                      'border-b border-gray-800 last:border-0 transition-colors ' +
+                      (isMeshRow ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
+                       isDisc    ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
+                                   'hover:bg-gray-800/50')
+                    }
+                  >
+                    {visibleCols.map(function(col) { return renderCell(c, col); })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
+          Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
+        </div>
       </div>
     </div>
   );
