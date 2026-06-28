@@ -41,7 +41,7 @@ export default function LogView({ logs }) {
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col">
+    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden flex flex-col sm:h-full w-full">
       <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold text-gray-300 mr-2">Log Output</h2>
 
@@ -83,7 +83,7 @@ export default function LogView({ logs }) {
         </label>
       </div>
 
-      <div className="overflow-y-auto font-mono text-xs" style={{ height: '420px' }}>
+      <div className="flex-1 overflow-y-auto font-mono text-xs">
         {filtered.length === 0 && (
           <div className="px-4 py-10 text-center text-gray-600">No log entries.</div>
         )}
