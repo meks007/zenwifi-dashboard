@@ -72,8 +72,8 @@ function publish(topic, payload, retain) {
  *
  * Per client (retained):
  *   <prefix>/clients/<mac>/state        online | offline
- *   <prefix>/clients/<mac>/last_seen    ISO timestamp of the current poll cycle
- *   <prefix>/clients/<mac>/first_seen   ISO timestamp from the DB (session start)
+ *   <prefix>/clients/<mac>/last_seen    ISO timestamp -- only published when online
+ *   <prefix>/clients/<mac>/first_seen   ISO timestamp -- only published when online
  *   <prefix>/clients/<mac>/ap           AP name
  *   <prefix>/clients/<mac>/info         JSON: hostname, ip, rssi, iface, tx_bytes, rx_bytes
  *
@@ -102,10 +102,16 @@ function publishClientStates(prevClients, currentClients, apStatus, pingerIsOnli
       if (pingerIsOnline(mac) === false) state = 'offline';
     }
 
-    publish(prefix + '/clients/' + mac + '/state',      state);
-    publish(prefix + '/clients/' + mac + '/last_seen',  now);
-    publish(prefix + '/clients/' + mac + '/first_seen', c.first_seen || null);
-    publish(prefix + '/clients/' + mac + '/ap',         c.apName || '');
+    publish(prefix + '/clients/' + mac + '/state', state);
+
+    // Do not advance last_seen or first_seen while the client is offline.
+    // Timestamps should only reflect periods of confirmed reachability.
+    if (state === 'online') {
+      publish(prefix + '/clients/' + mac + '/last_seen',  now);
+      publish(prefix + '/clients/' + mac + '/first_seen', c.first_seen || null);
+    }
+
+    publish(prefix + '/clients/' + mac + '/ap',   c.apName || '');
     publish(prefix + '/clients/' + mac + '/info', {
       hostname: c.hostname  || null,
       ip:       c.ip        || null,
