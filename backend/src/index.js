@@ -65,6 +65,7 @@ function broadcastState() {
     mqttConnected: mqttModule.isConnected(),
     dbHealthy:     dbHealthy,
     version:       pkg.version,
+    repoUrl:       pkg.repository.url,
     timestamp:     new Date().toISOString(),
   });
 }
@@ -340,6 +341,7 @@ wss.on('connection', function(ws) {
     mqttConnected: mqttModule.isConnected(),
     dbHealthy:     dbHealthy,
     version:       pkg.version,
+    repoUrl:       pkg.repository.url,
     timestamp:     new Date().toISOString(),
   }));
   ws.send(JSON.stringify({
