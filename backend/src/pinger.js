@@ -151,6 +151,27 @@ function setClients(entries) {
   statusMap.forEach(function(_, mac) {
     if (!currentMacs.has(mac)) statusMap.delete(mac);
   });
+
+  // Pre-seed statusMap from DB for any client not yet tracked so that
+  // previously-offline clients are not briefly shown as online before the
+  // first ping cycle completes after a backend restart.
+  knownClients.forEach(function(entry) {
+    if (statusMap.has(entry.mac)) return; // already tracked in this session
+    var dbPing = db.getLastPing(entry.mac);
+    if (!dbPing || !dbPing.last_ping_result) return;
+    var parts    = dbPing.last_ping_result.split('/');
+    var received = parseInt(parts[0], 10);
+    var sent     = parseInt(parts[1], 10);
+    var online   = !isNaN(received) && !isNaN(sent) && received > 0 && received === sent;
+    statusMap.set(entry.mac, {
+      ip:               entry.ip,
+      online:           online,
+      checkedAt:        new Date(dbPing.last_ping_at),
+      last_ping_at:     dbPing.last_ping_at,
+      last_ping_result: dbPing.last_ping_result,
+    });
+    logger.debug('[Pinger] Restored persisted ping state for ' + entry.mac + ': ' + (online ? 'online' : 'offline') + ' (' + dbPing.last_ping_result + ')');
+  });
 }
 
 /**
