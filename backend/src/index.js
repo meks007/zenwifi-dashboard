@@ -44,6 +44,7 @@ if (logFileCfg) {
   logger.initFileLog(logFileCfg.path, logFileCfg.maxBytes, logFileCfg.maxRotations);
   logger.info('[Logger] File logging enabled: ' + logFileCfg.path);
 }
+
 const aps                    = config.access_points || [];
 const masterAp               = aps.find(function(ap) { return ap.master === true; }) || null;
 const FAILURE_THRESHOLD      = 3;
@@ -71,6 +72,7 @@ function broadcast(data) {
   const msg = JSON.stringify(data);
   wss.clients.forEach(function(ws) { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
 }
+
 function broadcastState() {
   var visible = Array.from(currentClients.values()).filter(function(c) {
     if (c.connectionType !== 'discovered') return true;
@@ -147,6 +149,7 @@ async function poll() {
       wifiMacs.push(c.mac);
       if (c.isMeshNode && Array.isArray(c.meshActiveMacs)) c.meshActiveMacs.forEach(function(m) { wifiMacs.push(m); });
     });
+
     var discovered     = opnsense.getWiredClients(wifiMacs);
     var discoveredRows = discovered.map(function(c) {
       var ifaceLabel = resolveIfaceLabel(c.interface, ndCfg);
@@ -184,6 +187,7 @@ async function poll() {
         // Connection type changed (e.g. wifi -> discovered): treat as a new session.
         db.setFirstSeen(mac, now);
         logger.debug('[DB] first_seen reset for ' + mac + ': connection type changed (' + prev.connectionType + ' -> ' + c.connectionType + ')');
+
         // When a client drops off WiFi and appears as a discovered (wired) client,
         // immediately ping it so reachability is known without waiting for the next
         // scheduled cycle. Fire-and-forget: the result updates statusMap and triggers
@@ -328,6 +332,8 @@ wss.on('connection', function(ws) {
   }));
   // Send the last N log lines on connect so the frontend has immediate history.
   ws.send(JSON.stringify({ type: 'log_history', entries: logger.tail(logFileCfg ? logFileCfg.tailLines : 100) }));
+  // Sync debug mode to the client so the toggle reflects config.yaml on load.
+  ws.send(JSON.stringify({ type: 'debug_mode', enabled: logger.isDebug() }));
   ws.on('message', function(raw) {
     try {
       var msg = JSON.parse(raw);
@@ -350,6 +356,7 @@ logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInte
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
 logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
 logger.info('[Server] HA MQTT Discovery: ' + (haDiscovery ? 'enabled (prefix: ' + haDiscovery.prefix + ')' : 'disabled'));
+
 const preloaded = db.loadAll();
 logger.info('[DB] Loaded ' + preloaded.size + ' persisted first_seen record(s)');
 mqttModule.connect(config, handleDisconnect);
