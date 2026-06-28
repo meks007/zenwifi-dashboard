@@ -21,6 +21,11 @@
 //     - safe to call on every poll; the pinger decides internally whether it's due
 //     - does nothing if a cycle is already in progress
 //
+//   pinger.pingClient(mac)
+//     - immediately ping a single known client, bypassing the interval guard
+//     - runs the full online/offline flip logic and fires onStateChange if needed
+//     - resolves to { online, sent, received, flipped } or rejects if mac unknown
+//
 //   pinger.getStatus(mac)
 //     - returns { online: bool, checkedAt: Date|null, last_ping_at: string|null,
 //                 last_ping_result: string|null } or null if unknown
@@ -48,17 +53,11 @@ let _lastCycleStartAt = 0;             // epoch ms of when the last cycle began
 /**
  * Ping a single IP address with 3 packets, 1 s timeout per packet.
  * Resolves to { online: bool, sent: number, received: number }.
- * We parse stdout to count received replies; falls back to 0/3 on error.
  */
 function pingOne(ip) {
   return new Promise(function(resolve) {
-    // -c 3   : send 3 packets
-    // -W 1   : wait 1 s for each reply  (Linux)
-    // -w 3   : overall deadline 3 s     (Linux)
-    // macOS uses -t instead of -W; the -W flag is silently ignored there
     var cmd = 'ping -c 3 -W 1 -w 3 ' + ip + ' 2>&1';
     exec(cmd, function(err, stdout) {
-      // Parse "X packets transmitted, Y received" from ping output.
       var sent     = 3;
       var received = 0;
       var m = stdout && stdout.match(/(\d+) packets transmitted,\s*(\d+) (?:packets )?received/);
@@ -66,17 +65,49 @@ function pingOne(ip) {
         sent     = parseInt(m[1], 10);
         received = parseInt(m[2], 10);
       } else if (!err) {
-        // Could not parse but no error -> assume all received
         received = sent;
       }
-      resolve({ online: !err, sent: sent, received: received });
+      resolve({ online: received > 0, sent: sent, received: received });
     });
   });
 }
 
 /**
- * Ping all currently known discovered clients sequentially (not in parallel
- * to avoid flooding the network on large deployments).
+ * Apply a ping result for a single client entry: update statusMap, persist to
+ * DB, and fire onStateChange if the online/offline state flipped.
+ * Returns { online, sent, received, flipped }.
+ */
+function applyPingResult(entry, result) {
+  var online    = result.online;
+  var resultStr = result.received + '/' + result.sent;
+  var prev      = statusMap.get(entry.mac);
+  var flipped   = !prev || prev.online !== online;
+  var now       = new Date();
+
+  statusMap.set(entry.mac, {
+    ip:               entry.ip,
+    online:           online,
+    checkedAt:        now,
+    last_ping_at:     now.toISOString(),
+    last_ping_result: resultStr,
+  });
+
+  try {
+    db.setLastPing(entry.mac, now.toISOString(), resultStr);
+  } catch (dbErr) {
+    logger.error('[Pinger] Failed to persist last_ping for ' + entry.mac + ': ' + dbErr.message);
+  }
+
+  if (flipped) {
+    logger.info('[Pinger] ' + entry.mac + ' (' + entry.ip + ') is now ' + (online ? 'ONLINE' : 'OFFLINE'));
+    if (_onStateChange) _onStateChange(entry.mac, online);
+  }
+
+  return { online: online, sent: result.sent, received: result.received, flipped: flipped };
+}
+
+/**
+ * Ping all currently known discovered clients sequentially.
  */
 async function runPingCycle() {
   if (_cycleRunning) {
@@ -90,51 +121,19 @@ async function runPingCycle() {
 
   logger.debug('[Pinger] Starting ping cycle for ' + knownClients.length + ' client(s)');
 
-  // Snapshot the list at cycle start so mid-cycle setClients() calls don't
-  // affect the current run.
   var snapshot = knownClients.slice();
 
   for (var i = 0; i < snapshot.length; i++) {
     var entry = snapshot[i];
-    if (!entry.ip) continue; // no IP -> cannot ping
+    if (!entry.ip) continue;
 
     logger.debug('[Pinger] Pinging ' + entry.mac + ' (' + entry.ip + ')');
-
     var result = await pingOne(entry.ip);
-    var online = result.online;
-    var resultStr = result.received + '/' + result.sent;
-
     logger.debug(
       '[Pinger] Result for ' + entry.mac + ' (' + entry.ip + '): ' +
-      resultStr + ' packets received -> ' + (online ? 'ONLINE' : 'OFFLINE')
+      result.received + '/' + result.sent + ' packets received -> ' + (result.online ? 'ONLINE' : 'OFFLINE')
     );
-
-    var prev    = statusMap.get(entry.mac);
-    var flipped = !prev || prev.online !== online;
-    var now     = new Date();
-
-    statusMap.set(entry.mac, {
-      ip:               entry.ip,
-      online:           online,
-      checkedAt:        now,
-      last_ping_at:     now.toISOString(),
-      last_ping_result: resultStr,
-    });
-
-    // Persist to DB so the result survives a backend restart.
-    try {
-      db.setLastPing(entry.mac, now.toISOString(), resultStr);
-    } catch (dbErr) {
-      logger.error('[Pinger] Failed to persist last_ping for ' + entry.mac + ': ' + dbErr.message);
-    }
-
-    if (flipped) {
-      logger.info(
-        '[Pinger] ' + entry.mac + ' (' + entry.ip + ') is now ' +
-        (online ? 'ONLINE' : 'OFFLINE')
-      );
-      if (_onStateChange) _onStateChange(entry.mac, online);
-    }
+    applyPingResult(entry, result);
   }
 
   _cycleRunning = false;
@@ -148,7 +147,6 @@ async function runPingCycle() {
 function setClients(entries) {
   knownClients = (entries || []).filter(function(e) { return e.ip; });
 
-  // Remove stale entries from statusMap that are no longer in the client list
   var currentMacs = new Set(knownClients.map(function(e) { return e.mac; }));
   statusMap.forEach(function(_, mac) {
     if (!currentMacs.has(mac)) statusMap.delete(mac);
@@ -156,9 +154,8 @@ function setClients(entries) {
 }
 
 /**
- * Trigger a ping cycle if the configured interval has elapsed since the last
- * one started (or if no cycle has ever run). Safe to call on every poll().
- * A guard also prevents two cycles from overlapping.
+ * Trigger a ping cycle if the configured interval has elapsed.
+ * Safe to call on every poll(). Does nothing if a cycle is already running.
  */
 function triggerCycle() {
   var due = (Date.now() - _lastCycleStartAt) >= _intervalMs;
@@ -168,25 +165,42 @@ function triggerCycle() {
   });
 }
 
+/**
+ * Immediately ping a single known client, bypassing the interval guard.
+ * Runs the full online/offline flip logic and fires onStateChange if needed.
+ * Resolves to { online, sent, received, flipped }.
+ * Rejects if the MAC is not in the known client list or has no IP.
+ */
+async function pingClient(mac) {
+  var entry = knownClients.find(function(e) { return e.mac === mac; });
+  if (!entry) throw new Error('MAC ' + mac + ' not in known client list');
+  if (!entry.ip) throw new Error('MAC ' + mac + ' has no IP, cannot ping');
+
+  logger.info('[Pinger] Manual ping for ' + mac + ' (' + entry.ip + ')');
+  var result = await pingOne(entry.ip);
+  logger.debug(
+    '[Pinger] Manual result for ' + mac + ': ' +
+    result.received + '/' + result.sent + ' -> ' + (result.online ? 'ONLINE' : 'OFFLINE')
+  );
+  return applyPingResult(entry, result);
+}
+
 function getStatus(mac) {
   return statusMap.get(mac) || null;
 }
 
 function isOnline(mac) {
   var s = statusMap.get(mac);
-  if (!s) return null; // not checked yet -> treat as unknown (shown until first check)
+  if (!s) return null;
   return s.online;
 }
 
 function start(intervalMinutes, onStateChange) {
-  var mins   = intervalMinutes || 5;
+  var mins       = intervalMinutes || 5;
   _intervalMs    = mins * 60 * 1000;
   _onStateChange = onStateChange || null;
 
   logger.info('[Pinger] Starting; will ping discovered clients every ' + mins + ' minute(s)');
-
-  // No setInterval here - poll() drives timing via triggerCycle(), which
-  // checks the elapsed time itself and only runs when the interval is due.
 }
 
-module.exports = { start, setClients, triggerCycle, getStatus, isOnline };
+module.exports = { start, setClients, triggerCycle, pingClient, getStatus, isOnline };
