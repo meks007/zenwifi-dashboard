@@ -64,7 +64,8 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
   // autoScroll = true: follow tail, pin to bottom after every render.
   const [autoScroll, setAutoScroll] = useState(true);
   // Position indicators for showing scroll buttons.
-  const [atTop, setAtTop]       = useState(true);
+  // atTop starts false: on load we auto-scroll to the bottom, so Top is always relevant.
+  const [atTop, setAtTop]       = useState(false);
   const [atBottom, setAtBottom] = useState(true);
 
   const scrollRef    = useRef(null);
@@ -335,6 +336,18 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
             </div>
           );
         })}
+      </div>
+
+      {/* Status bar */}
+      <div className="flex-none px-4 py-1.5 border-t border-gray-800 flex items-center gap-3 text-xs text-gray-500 select-none">
+        <span>
+          {filtered.length === logs.length
+            ? filtered.length + ' lines'
+            : filtered.length + ' of ' + logs.length + ' lines'}
+        </span>
+        {(filter !== 'all' || search) && (
+          <span className="text-gray-600">filtered</span>
+        )}
       </div>
     </div>
   );
