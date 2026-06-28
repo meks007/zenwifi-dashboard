@@ -40,6 +40,10 @@ let currentClients = new Map();
 let prevClients    = new Map();
 let apStatus       = {};
 var dbHealthy      = true;
+// Guards the "returned after absence" and "type changed" first_seen resets so
+// they are not triggered on the very first poll, when prevClients is empty
+// simply because no poll has run yet (not because clients were absent).
+let firstPollDone  = false;
 
 const apFailCount = {};
 aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
@@ -77,8 +81,7 @@ async function poll() {
   let meshMap         = new Map();
   let nodeGroups      = new Map();
   let neighMap        = {};
-
-  if (masterAp) {
+if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     var meshResult = await sshModule.fetchMeshNodeMacs(masterAp);
@@ -106,7 +109,7 @@ await Promise.allSettled(aps.map(async function(ap) {
         logger.warn('[Poll] AP ' + ap.name + ' reached failure threshold (' + FAILURE_THRESHOLD + '), clearing its clients.');
       }
     }
-  }));
+}));
 const enriched = allRawClients.map(function(c) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
@@ -121,8 +124,7 @@ const enriched = allRawClients.map(function(c) {
       hostname:       (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
     });
   });
-
-  var allClients = dhcpEnriched;
+var allClients = dhcpEnriched;
   var ndCfg      = config.opnsense && config.opnsense.neighbor_discovery;
 
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
@@ -154,13 +156,15 @@ if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.l
   const now          = new Date().toISOString();
   const freshClients = new Map();
   allClients.forEach(function(c) { freshClients.set(c.mac, c); });
-
-  try {
+try {
     freshClients.forEach(function(c, mac) {
       var prev        = prevClients.get(mac);
       var isNew       = !prev && !db.getFirstSeen(mac);
-      var returned    = !prev && !!db.getFirstSeen(mac);
-      var typeChanged = prev && prev.connectionType !== c.connectionType;
+      // Only reset on return/type-change after the first poll has completed.
+      // On the initial poll prevClients is empty for all clients, so without
+      // this guard every client with a DB record would be treated as "returned".
+      var returned    = firstPollDone && !prev && !!db.getFirstSeen(mac);
+      var typeChanged = firstPollDone && prev && prev.connectionType !== c.connectionType;
       if (isNew || returned || typeChanged) {
         db.setFirstSeen(mac, now);
         var reason = isNew ? 'new client' : (returned ? 'returned after absence' : 'connection type changed (' + prev.connectionType + ' -> ' + c.connectionType + ')');
@@ -189,9 +193,9 @@ if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.l
     logger.error('[DB] Error during timestamp update: ' + dbErr.message);
     if (dbHealthy) { dbHealthy = false; broadcast({ type: 'db_status', healthy: false }); }
   }
-
-  prevClients    = currentClients;
+prevClients    = currentClients;
   currentClients = freshClients;
+  firstPollDone  = true;
   mqttModule.publishClientStates(prevClients, currentClients, apStatus, pinger.isOnline);
   broadcastState();
 }
@@ -256,7 +260,6 @@ registerRoutes(app, {
   handlePing:        handlePing,
   getDbHealthy:      function() { return dbHealthy; },
 });
-
 wss.on('connection', function(ws) {
   logger.debug('[WS] Client connected');
   var visibleOnConnect = Array.from(currentClients.values()).filter(function(c) {
@@ -286,8 +289,7 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   var prefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
   mqttModule.publish(prefix + '/clients/' + mac + '/state', online ? 'online' : 'offline');
-
-  // When a discovered client comes back online, reset first_seen to now so
+// When a discovered client comes back online, reset first_seen to now so
   // the timestamp reflects the start of the current online session, not the
   // original discovery time (which may be days/weeks old).
   if (online) {
