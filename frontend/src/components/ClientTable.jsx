@@ -10,12 +10,8 @@ import { compareByKey, macOui } from './clientTableUtils.js';
 import { ColumnSettingsPanel, ResizeHandle } from './ClientTableControls.jsx';
 import ClientTableCell from './ClientTableCell.jsx';
 
-export default function ClientTable({ clients, disconnecting, onDisconnect, pinging, onPing, search, onSearchChange, onLogSearch }) {
+export default function ClientTable({ clients, disconnecting, onDisconnect, pinging, onPing, search, onSearchChange, activeAps, onActiveApsChange, activeVendors, onActiveVendorsChange, activeOuis, onActiveOuisChange, meshOnly, onMeshOnlyChange, onLogSearch }) {
   const [sortCols, setSortCols]           = useState(function() { return loadSortPrefs() || DEFAULT_SORT; });
-  const [activeAps, setActiveAps]         = useState(new Set());
-  const [activeVendors, setActiveVendors] = useState(new Set());
-  const [activeOuis, setActiveOuis]       = useState(new Set());
-  const [meshOnly, setMeshOnly]           = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
 
   // Use matchMedia for breakpoint detection. This is driven by the CSS engine
@@ -64,7 +60,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
   const [, setTick] = useState(0);
   useEffect(function() {
     const id = setInterval(function() { setTick(function(n) { return n + 1; }); }, 30000);
-    return function() { clearInterval(id); }
+    return function() { clearInterval(id); };
   }, []);
 
   // Which columns to show depends on the current breakpoint.
@@ -84,6 +80,12 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
       return next;
     });
   }
+
+  // Convenience wrappers for the controlled facet props.
+  function toggleAp(v)     { toggleFacet(onActiveApsChange, v); }
+  function toggleVendor(v) { toggleFacet(onActiveVendorsChange, v); }
+  function toggleOui(v)    { toggleFacet(onActiveOuisChange, v); }
+  function toggleMesh()    { onMeshOnlyChange(function(v) { return !v; }); }
 
   function toggleSort(key, e) {
     setSortCols(function(prev) {
@@ -125,10 +127,10 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
 
   function clearAll() {
     onSearchChange('');
-    setActiveAps(new Set());
-    setActiveVendors(new Set());
-    setActiveOuis(new Set());
-    setMeshOnly(false);
+    onActiveApsChange(new Set());
+    onActiveVendorsChange(new Set());
+    onActiveOuisChange(new Set());
+    onMeshOnlyChange(false);
   }
 
   const q = search.trim().toLowerCase();
@@ -162,10 +164,10 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
   const hasFilter = q || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly;
 
   const chips = [];
-  if (meshOnly) chips.push({ label: 'Mesh only', remove: function() { setMeshOnly(false); } });
-  activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
-  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
-  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleFacet(setActiveOuis, v);    } }); });
+  if (meshOnly) chips.push({ label: 'Mesh only', remove: function() { onMeshOnlyChange(false); } });
+  activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleAp(v);     } }); });
+  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleVendor(v); } }); });
+  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleOui(v);    } }); });
 
   // Desktop: card is 102% wide so the table (100% of card) always has room and
   //   never causes a phantom horizontal scrollbar from sub-pixel rounding.
@@ -251,13 +253,14 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
           <div className="flex flex-wrap gap-1.5">
             {chips.map(function(chip, i) {
               return (
-                <span
+                <button
                   key={i}
-                  className="inline-flex items-center gap-1 text-xs bg-blue-900/30 border border-blue-700/40 text-blue-300 rounded-full px-2 py-0.5"
+                  onClick={chip.remove}
+                  className="inline-flex items-center gap-1 text-xs bg-blue-900/30 border border-blue-700/40 text-blue-300 rounded-full px-2 py-0.5 hover:bg-blue-800/50 hover:border-blue-600/60 hover:text-white transition-colors"
                 >
                   {chip.label}
-                  <button onClick={chip.remove} className="hover:text-white leading-none">&times;</button>
-                </span>
+                  <span className="leading-none opacity-60">&times;</span>
+                </button>
               );
             })}
           </div>
@@ -332,10 +335,10 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
                           onDisconnect={onDisconnect}
                           pinging={pinging}
                           onPing={onPing}
-                          onMeshToggle={function() { setMeshOnly(function(v) { return !v; }); }}
-                          onApToggle={function(v) { toggleFacet(setActiveAps, v); }}
-                          onVendorToggle={function(v) { toggleFacet(setActiveVendors, v); }}
-                          onOuiToggle={function(v) { toggleFacet(setActiveOuis, v); }}
+                          onMeshToggle={toggleMesh}
+                          onApToggle={toggleAp}
+                          onVendorToggle={toggleVendor}
+                          onOuiToggle={toggleOui}
                           onLogSearch={onLogSearch}
                         />
                       );
