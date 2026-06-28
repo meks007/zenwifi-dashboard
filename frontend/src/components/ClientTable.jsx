@@ -1,36 +1,36 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
-// Column definitions - order here is the default render order.
+// ---- Column definitions ----
+// Default widths are in pixels. Stored widths override them via localStorage.
 const DEFAULT_COLUMNS = [
-  { id: 'mac',        label: 'MAC Address' },
-  { id: 'vendor',     label: 'Vendor' },
-  { id: 'hostname',   label: 'Hostname' },
-  { id: 'ip',         label: 'IP Address' },
-  { id: 'apName',     label: 'Access Point' },
-  { id: 'iface',      label: 'Interface' },
-  { id: 'rssi',       label: 'RSSI (dBm)' },
-  { id: 'tx_bytes',   label: 'TX' },
-  { id: 'rx_bytes',   label: 'RX' },
-  { id: 'first_seen', label: 'First Seen' },
-  { id: 'actions',    label: 'Actions' },
+  { id: 'mac',        label: 'MAC Address',  defaultWidth: 140 },
+  { id: 'vendor',     label: 'Vendor',       defaultWidth: 200 },
+  { id: 'hostname',   label: 'Hostname',     defaultWidth: 160 },
+  { id: 'ip',         label: 'IP Address',   defaultWidth: 120 },
+  { id: 'apName',     label: 'Access Point', defaultWidth: 160 },
+  { id: 'iface',      label: 'Interface',    defaultWidth: 90  },
+  { id: 'rssi',       label: 'RSSI (dBm)',   defaultWidth: 90  },
+  { id: 'tx_bytes',   label: 'TX',           defaultWidth: 80  },
+  { id: 'rx_bytes',   label: 'RX',           defaultWidth: 80  },
+  { id: 'first_seen', label: 'First Seen',   defaultWidth: 100 },
+  { id: 'actions',    label: 'Actions',      defaultWidth: 120 },
 ];
 
-const LS_KEY = 'zenwifi_columns_v1';
+const LS_COLS_KEY   = 'zenwifi_columns_v1';
+const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
 
 function loadColumnPrefs() {
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(LS_COLS_KEY);
     if (!raw) return null;
     const saved = JSON.parse(raw);
     if (!Array.isArray(saved)) return null;
-    // Merge saved prefs with DEFAULT_COLUMNS so newly added columns appear at end.
     const savedMap = new Map(saved.map(function(c) { return [c.id, c]; }));
     const merged = DEFAULT_COLUMNS.map(function(def) {
       return savedMap.has(def.id)
-        ? { id: def.id, label: def.label, visible: savedMap.get(def.id).visible }
-        : { id: def.id, label: def.label, visible: true };
+        ? { id: def.id, label: def.label, defaultWidth: def.defaultWidth, visible: savedMap.get(def.id).visible }
+        : { id: def.id, label: def.label, defaultWidth: def.defaultWidth, visible: true };
     });
-    // Restore saved order for known columns; append any new ones at the end.
     const savedOrder = saved.map(function(c) { return c.id; }).filter(function(id) {
       return merged.some(function(m) { return m.id === id; });
     });
@@ -46,16 +46,31 @@ function loadColumnPrefs() {
 
 function saveColumnPrefs(cols) {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(
+    localStorage.setItem(LS_COLS_KEY, JSON.stringify(
       cols.map(function(c) { return { id: c.id, visible: c.visible }; })
     ));
   } catch (_e) {}
 }
 
-// Default sort: IP address ascending (numeric).
+function loadWidthPrefs() {
+  try {
+    const raw = localStorage.getItem(LS_WIDTHS_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) || {};
+  } catch (_e) {
+    return {};
+  }
+}
+
+function saveWidthPrefs(widths) {
+  try {
+    localStorage.setItem(LS_WIDTHS_KEY, JSON.stringify(widths));
+  } catch (_e) {}
+}
+
 const DEFAULT_SORT = [{ key: 'ip', dir: 'asc' }];
 
-// --- Helpers ---
+// ---- Helpers ----
 
 function rssiColor(rssi) {
   if (rssi === null || rssi === undefined) return 'text-gray-500';
@@ -92,8 +107,7 @@ function ipToInt(ip) {
 
 function compareByKey(a, b, key) {
   if (key === 'ip') {
-    const ai = ipToInt(a.ip);
-    const bi = ipToInt(b.ip);
+    const ai = ipToInt(a.ip), bi = ipToInt(b.ip);
     if (ai === null && bi === null) return 0;
     if (ai === null) return 1;
     if (bi === null) return -1;
@@ -128,7 +142,7 @@ function fmtAbsolute(isoStr) {
   return new Date(isoStr).toLocaleString();
 }
 
-// --- VendorCell ---
+// ---- VendorCell ----
 
 function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshClick, onVendorClick, onOuiClick }) {
   if (client.isMeshNode) {
@@ -147,8 +161,8 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
       </button>
     );
   }
-  const oui = macOui(client.mac);
-  const ouiActive = oui && activeOuis.has(oui);
+  const oui        = macOui(client.mac);
+  const ouiActive  = oui && activeOuis.has(oui);
   const vendorActive = client.vendor && activeVendors.has(client.vendor);
   return (
     <span className="inline-flex items-center gap-1.5">
@@ -184,17 +198,13 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
   );
 }
 
-// --- ColumnSettingsPanel ---
-// Popover for toggling column visibility and reordering via drag-and-drop.
+// ---- ColumnSettingsPanel ----
 
 function ColumnSettingsPanel({ columns, onChange, onClose }) {
   const dragIdx = useRef(null);
   const [localCols, setLocalCols] = useState(columns);
 
-  // Propagate every local change up to the parent immediately.
-  useEffect(function() {
-    onChange(localCols);
-  }, [localCols]);
+  useEffect(function() { onChange(localCols); }, [localCols]);
 
   function toggleVisible(id) {
     setLocalCols(function(prev) {
@@ -221,13 +231,11 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
     });
   }
 
-  function onDragEnd() {
-    dragIdx.current = null;
-  }
+  function onDragEnd() { dragIdx.current = null; }
 
   function resetToDefault() {
     setLocalCols(DEFAULT_COLUMNS.map(function(c) {
-      return { id: c.id, label: c.label, visible: true };
+      return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true };
     }));
   }
 
@@ -236,20 +244,8 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
         <div className="flex gap-2 items-center">
-          <button
-            onClick={resetToDefault}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-            title="Reset to default"
-          >
-            Reset
-          </button>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
-            title="Close"
-          >
-            &times;
-          </button>
+          <button onClick={resetToDefault} className="text-xs text-gray-500 hover:text-gray-300 transition-colors" title="Reset to default">Reset</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none" title="Close">&times;</button>
         </div>
       </div>
       <ul className="space-y-1">
@@ -268,9 +264,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
                 onClick={function() { toggleVisible(col.id); }}
                 className={
                   'w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
-                  (col.visible
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'bg-gray-700 border-gray-600 text-transparent')
+                  (col.visible ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-700 border-gray-600 text-transparent')
                 }
                 title={col.visible ? 'Hide column' : 'Show column'}
               >
@@ -278,9 +272,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
                   <path d="M1 4l3 3 5-6"/>
                 </svg>
               </button>
-              <span className={'text-xs flex-1 ' + (col.visible ? 'text-gray-200' : 'text-gray-500')}>
-                {col.label}
-              </span>
+              <span className={'text-xs flex-1 ' + (col.visible ? 'text-gray-200' : 'text-gray-500')}>{col.label}</span>
             </li>
           );
         })}
@@ -290,36 +282,92 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
   );
 }
 
-// Sortable column ids - actions is intentionally excluded from sorting.
-const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
+// ---- ResizeHandle ----
+// Draggable handle rendered at the right edge of each <th>.
+// Calls onResize(delta) as the user drags, onDone() when released.
 
-// --- ClientTable ---
+function ResizeHandle({ onResize, onDone }) {
+  const startX = useRef(null);
+
+  function onMouseDown(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    startX.current = e.clientX;
+
+    function onMove(ev) {
+      onResize(ev.clientX - startX.current);
+      startX.current = ev.clientX;
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      onDone();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  return (
+    <span
+      onMouseDown={onMouseDown}
+      className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group/rh select-none"
+      title="Drag to resize column"
+    >
+      <span className="w-px h-4 bg-gray-700 group-hover/rh:bg-blue-500 transition-colors rounded-full"></span>
+    </span>
+  );
+}
+
+const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
+const MIN_COL_WIDTH = 50;
+
+// ---- ClientTable ----
 
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
-  const [search, setSearch] = useState('');
-  const [sortCols, setSortCols] = useState(DEFAULT_SORT);
-  const [activeAps, setActiveAps]         = useState(new Set());
+  const [search, setSearch]           = useState('');
+  const [sortCols, setSortCols]       = useState(DEFAULT_SORT);
+  const [activeAps, setActiveAps]     = useState(new Set());
   const [activeVendors, setActiveVendors] = useState(new Set());
-  const [activeOuis, setActiveOuis]       = useState(new Set());
-  const [meshOnly, setMeshOnly] = useState(false);
+  const [activeOuis, setActiveOuis]   = useState(new Set());
+  const [meshOnly, setMeshOnly]       = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef(null);
 
-  // Column visibility and order - seeded from localStorage on first render.
   const [columns, setColumns] = useState(function() {
     const saved = loadColumnPrefs();
     if (saved) return saved;
     return DEFAULT_COLUMNS.map(function(c) {
-      return { id: c.id, label: c.label, visible: true };
+      return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true };
     });
   });
 
-  // Persist column state whenever it changes.
-  useEffect(function() {
-    saveColumnPrefs(columns);
-  }, [columns]);
+  // colWidths: map of id -> px width (current session, not yet saved)
+  const [colWidths, setColWidths] = useState(function() {
+    return loadWidthPrefs();
+  });
 
-  // Close the settings popover when clicking outside it.
+  function getWidth(col) {
+    return colWidths[col.id] || col.defaultWidth;
+  }
+
+  function handleResize(colId, delta) {
+    setColWidths(function(prev) {
+      const currentDef = DEFAULT_COLUMNS.find(function(c) { return c.id === colId; });
+      const current = prev[colId] || (currentDef ? currentDef.defaultWidth : 100);
+      const next = Math.max(MIN_COL_WIDTH, current + delta);
+      return Object.assign({}, prev, { [colId]: next });
+    });
+  }
+
+  function handleResizeDone() {
+    setColWidths(function(w) {
+      saveWidthPrefs(w);
+      return w;
+    });
+  }
+
+  useEffect(function() { saveColumnPrefs(columns); }, [columns]);
+
   useEffect(function() {
     if (!showSettings) return;
     function handler(e) {
@@ -362,20 +410,20 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     if (meshOnly && !c.isMeshNode) return false;
     if (search) {
       const q = search.toLowerCase();
-      const textMatch = (
-        (c.mac && c.mac.toLowerCase().includes(q)) ||
-        (c.vendor && c.vendor.toLowerCase().includes(q)) ||
+      const hit = (
+        (c.mac      && c.mac.toLowerCase().includes(q)) ||
+        (c.vendor   && c.vendor.toLowerCase().includes(q)) ||
         (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-        (c.ip && c.ip.toLowerCase().includes(q)) ||
-        (c.apName && c.apName.toLowerCase().includes(q)) ||
+        (c.ip       && c.ip.toLowerCase().includes(q)) ||
+        (c.apName   && c.apName.toLowerCase().includes(q)) ||
         (c.isMeshNode && 'mesh node'.includes(q)) ||
         (c.connectionType === 'discovered' && 'discovered'.includes(q))
       );
-      if (!textMatch) return false;
+      if (!hit) return false;
     }
-    if (activeAps.size > 0 && !activeAps.has(c.apName)) return false;
-    if (activeVendors.size > 0 && !activeVendors.has(c.vendor)) return false;
-    if (activeOuis.size > 0 && !activeOuis.has(macOui(c.mac))) return false;
+    if (activeAps.size     > 0 && !activeAps.has(c.apName))       return false;
+    if (activeVendors.size > 0 && !activeVendors.has(c.vendor))   return false;
+    if (activeOuis.size    > 0 && !activeOuis.has(macOui(c.mac))) return false;
     return true;
   });
 
@@ -390,32 +438,22 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   function toggleSort(key, event) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
-      const existingIdx = prev.findIndex(function(s) { return s.key === key; });
-      if (shift) {
-        return prev.filter(function(s) { return s.key !== key; });
-      }
-      if (existingIdx === -1) {
-        return prev.concat({ key: key, dir: 'asc' });
-      }
-      const current = prev[existingIdx];
-      if (current.dir === 'asc') {
-        return prev.map(function(s, i) {
-          return i === existingIdx ? { key: s.key, dir: 'desc' } : s;
-        });
+      const idx = prev.findIndex(function(s) { return s.key === key; });
+      if (shift) return prev.filter(function(s) { return s.key !== key; });
+      if (idx === -1) return prev.concat({ key: key, dir: 'asc' });
+      if (prev[idx].dir === 'asc') {
+        return prev.map(function(s, i) { return i === idx ? { key: s.key, dir: 'desc' } : s; });
       }
       return prev.filter(function(s) { return s.key !== key; });
     });
   }
 
-  function resetSort() {
-    setSortCols(DEFAULT_SORT);
-  }
+  function resetSort() { setSortCols(DEFAULT_SORT); }
 
   function sortMark(key) {
     const idx = sortCols.findIndex(function(s) { return s.key === key; });
     if (idx === -1) return null;
-    const col = sortCols[idx];
-    const arrow = col.dir === 'asc' ? ' \u2191' : ' \u2193';
+    const arrow = sortCols[idx].dir === 'asc' ? ' \u2191' : ' \u2193';
     const badge = sortCols.length > 1
       ? <sup className="ml-0.5 text-blue-400 font-bold">{idx + 1}</sup>
       : null;
@@ -424,44 +462,33 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   const isDefaultSort =
     sortCols.length === DEFAULT_SORT.length &&
-    sortCols.every(function(s, i) {
-      return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir;
-    });
+    sortCols.every(function(s, i) { return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir; });
 
   const chips = [];
-  if (meshOnly) {
-    chips.push({ label: 'Mesh Node', remove: function() { setMeshOnly(false); } });
-  }
-  activeOuis.forEach(function(v) {
-    chips.push({ label: 'OUI: ' + v, remove: function() { toggleFacet(setActiveOuis, v); } });
-  });
-  activeVendors.forEach(function(v) {
-    chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } });
-  });
-  activeAps.forEach(function(v) {
-    chips.push({ label: 'AP: ' + v, remove: function() { toggleFacet(setActiveAps, v); } });
-  });
+  if (meshOnly) chips.push({ label: 'Mesh Node', remove: function() { setMeshOnly(false); } });
+  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleFacet(setActiveOuis, v);    } }); });
+  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
+  activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
 
-  // Render a single <td> for the given column id and client row.
-  function renderCell(c, colId) {
+  function renderCell(c, col) {
     const isDiscovered = c.connectionType === 'discovered';
     const isMesh       = c.isMeshNode;
-    const txFmt        = fmtBytes(c.tx_bytes);
-    const rxFmt        = fmtBytes(c.rx_bytes);
+    const w            = getWidth(col);
+    const style        = { width: w, minWidth: w, maxWidth: w };
 
-    switch (colId) {
+    switch (col.id) {
       case 'mac':
-        return <td key="mac" className="px-4 py-3 font-mono text-xs text-blue-300">{c.mac}</td>;
+        return <td key="mac" style={style} className="px-3 py-3 font-mono text-xs text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap">{c.mac}</td>;
 
       case 'vendor':
         return (
-          <td key="vendor" className="px-4 py-3 text-xs text-left">
+          <td key="vendor" style={style} className="px-3 py-3 text-xs text-left overflow-hidden">
             <VendorCell
               client={c}
               isMeshActive={meshOnly}
               activeVendors={activeVendors}
               activeOuis={activeOuis}
-              onMeshClick={function() { setMeshOnly(function(prev) { return !prev; }); }}
+              onMeshClick={function() { setMeshOnly(function(p) { return !p; }); }}
               onVendorClick={function(v) { toggleFacet(setActiveVendors, v); }}
               onOuiClick={function(v) { toggleFacet(setActiveOuis, v); }}
             />
@@ -470,78 +497,78 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
       case 'hostname':
         return (
-          <td key="hostname" className="px-4 py-3 text-gray-300">
+          <td key="hostname" style={style} className="px-3 py-3 text-gray-300 overflow-hidden text-ellipsis whitespace-nowrap">
             {c.hostname || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'ip':
         return (
-          <td key="ip" className="px-4 py-3 font-mono text-xs text-gray-400">
+          <td key="ip" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
             {c.ip || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'apName':
         return (
-          <td key="apName" className="px-4 py-3 text-left">
+          <td key="apName" style={style} className="px-3 py-3 text-left overflow-hidden">
             <button
               onClick={function() { toggleFacet(setActiveAps, c.apName); }}
               title={'Filter by AP: ' + c.apName}
-              className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300 text-left"
+              className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-full px-2.5 py-0.5 text-xs transition-colors cursor-pointer select-none hover:border-blue-600/40 hover:text-blue-300 text-gray-300 text-left max-w-full"
               style={activeAps.has(c.apName) ? { background: 'rgba(30,58,138,0.3)', borderColor: 'rgba(37,99,235,0.5)', color: 'rgb(147,197,253)' } : {}}
             >
               <span className={
                 'w-1.5 h-1.5 rounded-full flex-shrink-0 ' +
                 (isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400')
               }></span>
-              {c.apName}
+              <span className="truncate">{c.apName}</span>
             </button>
           </td>
         );
 
       case 'iface':
         return (
-          <td key="iface" className="px-4 py-3 font-mono text-xs text-gray-500">
+          <td key="iface" style={style} className="px-3 py-3 font-mono text-xs text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap">
             {c.iface || 'n/a'}
           </td>
         );
 
       case 'rssi':
         return (
-          <td key="rssi" className={'px-4 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
+          <td key="rssi" style={style} className={'px-3 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
             {c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'tx_bytes':
         return (
-          <td key="tx_bytes" className="px-4 py-3 font-mono text-xs text-gray-400">
-            {txFmt !== null ? txFmt : <span className="text-gray-600">n/a</span>}
+          <td key="tx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400">
+            {fmtBytes(c.tx_bytes) !== null ? fmtBytes(c.tx_bytes) : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'rx_bytes':
         return (
-          <td key="rx_bytes" className="px-4 py-3 font-mono text-xs text-gray-400">
-            {rxFmt !== null ? rxFmt : <span className="text-gray-600">n/a</span>}
+          <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400">
+            {fmtBytes(c.rx_bytes) !== null ? fmtBytes(c.rx_bytes) : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'first_seen':
         return (
-          <td key="first_seen" className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap" title={fmtAbsolute(c.first_seen)}>
+          <td key="first_seen" style={style} className="px-3 py-3 text-xs text-gray-400 whitespace-nowrap overflow-hidden text-ellipsis" title={fmtAbsolute(c.first_seen)}>
             {c.first_seen ? fmtRelative(c.first_seen) : <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'actions':
         return (
-          <td key="actions" className="px-4 py-3 text-right">
+          <td key="actions" style={style} className="px-3 py-3 text-right">
             {isMesh ? (
-              <span className="text-xs text-gray-600 px-3 py-1.5">Infrastructure</span>
+              <span className="text-xs text-gray-600">Infrastructure</span>
             ) : isDiscovered ? (
-              <span className="text-xs text-gray-600 px-3 py-1.5">Discovered</span>
+              <span className="text-xs text-gray-600">Discovered</span>
             ) : (
               <button
                 onClick={function() { onDisconnect(c.mac); }}
@@ -560,12 +587,14 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         );
 
       default:
-        return <td key={colId} className="px-4 py-3 text-gray-600">-</td>;
+        return <td key={col.id} style={style} className="px-3 py-3 text-gray-600">-</td>;
     }
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden w-full">
+
+      {/* Toolbar */}
       <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="flex items-center gap-3">
@@ -581,7 +610,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* Column settings trigger */}
             <div className="relative" ref={settingsRef}>
               <button
                 onClick={function() { setShowSettings(function(v) { return !v; }); }}
@@ -607,7 +635,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                 />
               )}
             </div>
-            {/* Search input */}
             <div className="relative flex items-center sm:w-80">
               <input
                 type="text"
@@ -641,27 +668,40 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
           </div>
         )}
       </div>
+
+      {/* Table - scrolls horizontally to fit its own content; outer card stretches to fill available space */}
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="text-sm border-collapse" style={{ tableLayout: 'fixed', width: visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0) + 'px' }}>
+          <colgroup>
+            {visibleCols.map(function(col) {
+              return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
+            })}
+          </colgroup>
           <thead>
             <tr className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800">
               {visibleCols.map(function(col) {
-                const sortable = SORTABLE.has(col.id);
-                const isActive = sortable && sortCols.some(function(s) { return s.key === col.id; });
-                const isActionsCol = col.id === 'actions';
+                const sortable    = SORTABLE.has(col.id);
+                const isActive    = sortable && sortCols.some(function(s) { return s.key === col.id; });
+                const isActions   = col.id === 'actions';
+                const w           = getWidth(col);
                 return (
                   <th
                     key={col.id}
+                    style={{ width: w, minWidth: w, maxWidth: w, position: 'relative' }}
                     onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
                     className={
-                      'px-4 py-2 select-none transition-colors whitespace-nowrap ' +
-                      (isActionsCol ? 'text-right ' : 'text-left ') +
+                      'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
+                      (isActions ? 'text-right ' : 'text-left ') +
                       (sortable ? 'cursor-pointer ' : '') +
                       (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
                     }
-                    title={sortable ? 'Click to cycle asc/desc/off. Shift+click to remove from sort.' : undefined}
+                    title={sortable ? 'Click to sort. Shift+click to add/remove from multi-sort.' : undefined}
                   >
-                    {col.label}{sortable ? sortMark(col.id) : null}
+                    <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
+                    <ResizeHandle
+                      onResize={function(delta) { handleResize(col.id, delta); }}
+                      onDone={handleResizeDone}
+                    />
                   </th>
                 );
               })}
@@ -688,13 +728,14 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                                     'hover:bg-gray-800/50')
                   }
                 >
-                  {visibleCols.map(function(col) { return renderCell(c, col.id); })}
+                  {visibleCols.map(function(col) { return renderCell(c, col); })}
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
       <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
         Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
       </div>
