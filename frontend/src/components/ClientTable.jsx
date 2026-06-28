@@ -20,6 +20,18 @@ const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
 const MOBILE_BP     = 640; // px, matches Tailwind sm:
 
+// matchMedia query created once at module level.
+// Using matchMedia instead of window.innerWidth avoids spurious breakpoint
+// flips caused by resize events that fire when the mobile browser adjusts
+// the visual viewport (address bar show/hide, keyboard, etc.).
+var _mq = null;
+function getMq() {
+  if (!_mq && typeof window !== 'undefined') {
+    _mq = window.matchMedia('(max-width: ' + (MOBILE_BP - 1) + 'px)');
+  }
+  return _mq;
+}
+
 function loadColumnPrefs() {
   try {
     const raw = localStorage.getItem(LS_COLS_KEY);
@@ -361,12 +373,19 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [showSettings, setShowSettings]   = useState(false);
   const settingsRef = useRef(null);
 
-  // Detect mobile breakpoint reactively.
-  const [isMobile, setIsMobile] = useState(function() { return window.innerWidth < MOBILE_BP; });
+  // Use matchMedia for breakpoint detection. This is driven by the CSS engine
+  // and never fires spuriously due to mobile viewport reflows (address bar,
+  // keyboard, etc.) the way a window resize listener does.
+  const [isMobile, setIsMobile] = useState(function() {
+    var mq = getMq();
+    return mq ? mq.matches : false;
+  });
   useEffect(function() {
-    function onResize() { setIsMobile(window.innerWidth < MOBILE_BP); }
-    window.addEventListener('resize', onResize);
-    return function() { window.removeEventListener('resize', onResize); };
+    var mq = getMq();
+    if (!mq) return;
+    function onChange(e) { setIsMobile(e.matches); }
+    mq.addEventListener('change', onChange);
+    return function() { mq.removeEventListener('change', onChange); };
   }, []);
 
   const [columns, setColumns] = useState(function() {
@@ -416,7 +435,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     return isMobile ? c.mobileVisible : c.visible;
   });
 
-  // Desktop: sum of fixed px column widths. Mobile: not used (auto layout).
+  // Desktop: sum of fixed px column widths. Mobile: auto layout.
   const tableWidth = isMobile
     ? null
     : visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
@@ -486,7 +505,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   function sortMark(key) {
     const idx = sortCols.findIndex(function(s) { return s.key === key; });
     if (idx === -1) return null;
-    const arrow = sortCols[idx].dir === 'asc' ? ' \u2191' : ' \u2193';
+    const arrow = sortCols[idx].dir === 'asc' ? ' (asc)' : ' (desc)';
     const badge = sortCols.length > 1
       ? <sup className="ml-0.5 text-blue-400 font-bold">{idx + 1}</sup>
       : null;
@@ -624,20 +643,24 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  // Layout:
-  //   Desktop: card is width:min-content so it exactly wraps the table.
-  //            overflow-x:auto on the card handles horizontal scroll.
-  //            The page body scrolls vertically; position:sticky on thead
-  //            anchors to the viewport (no overflow-y trapping).
-  //   Mobile:  card is full width with a min-height so the table body is
-  //            always visible even when the viewport is very short.
-  //            overflow-x:auto handles wide content on small screens.
+  // Card layout: flex-col, h-full fills the centered container from App.jsx.
+  // No overflow on the card itself so position:sticky can propagate through.
+  // Desktop: width shrinks to table content (min-content).
+  // Mobile: full width with a min-height so rows are visible on short screens.
   const cardStyle = isMobile
-    ? { width: '100%', minHeight: '320px', overflowX: 'auto' }
-    : { width: 'min-content', overflowX: 'auto' };
+    ? { width: '100%', minWidth: 0 }
+    : { width: 'min-content', minWidth: '400px' };
+
+  // The scroll div (flex-1 overflow-auto) is the sole scroll container for
+  // both axes. Its height is bounded by the card's h-full within the
+  // viewport-locked layout from App.jsx, so it actually scrolls vertically.
+  // position:sticky on thead works correctly within this bounded div.
+  // On mobile a minHeight ensures the table area never collapses to zero.
+  const scrollDivStyle = isMobile ? { minHeight: '320px' } : {};
 
   return (
-    <div style={cardStyle} className="bg-gray-900 rounded-xl border border-gray-800 flex flex-col">
+    <div style={cardStyle} className="h-full flex flex-col bg-gray-900 rounded-xl border border-gray-800">
+
       {/* Toolbar */}
       <div className="flex-none px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -714,90 +737,93 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         )}
       </div>
 
-      {/* Table: page body scrolls vertically, card scrolls horizontally.
-          position:sticky on thead works because there is no overflow-y
-          ancestor between the thead and the page scroll container. */}
-      <table
-        className="text-sm border-collapse flex-1"
-        style={isMobile
-          ? { tableLayout: 'auto', width: '100%' }
-          : { tableLayout: 'fixed', width: tableWidth + 'px' }
-        }
-      >
-        {!isMobile && (
-          <colgroup>
-            {visibleCols.map(function(col) {
-              return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
-            })}
-          </colgroup>
-        )}
-        <thead>
-          <tr
-            className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
-            style={{ position: 'sticky', top: 0, zIndex: 20 }}
-          >
-            {visibleCols.map(function(col) {
-              const sortable  = SORTABLE.has(col.id);
-              const isActive  = sortable && sortCols.some(function(s) { return s.key === col.id; });
-              const isActions = col.id === 'actions';
-              const thStyle   = isMobile
-                ? { position: 'relative' }
-                : (function() {
-                    const w = getWidth(col);
-                    return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' };
-                  })();
+      {/* Scroll area: the only element that scrolls, on both axes.
+          Its height is bounded by the card's h-full + flex-1 so it does
+          not grow unboundedly and actually scrolls vertically.
+          thead position:sticky top:0 works within this bounded scroll div. */}
+      <div className="flex-1 overflow-auto" style={scrollDivStyle}>
+        <table
+          className="text-sm border-collapse"
+          style={isMobile
+            ? { tableLayout: 'auto', width: '100%' }
+            : { tableLayout: 'fixed', width: tableWidth + 'px' }
+          }
+        >
+          {!isMobile && (
+            <colgroup>
+              {visibleCols.map(function(col) {
+                return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
+              })}
+            </colgroup>
+          )}
+          <thead>
+            <tr
+              className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
+              style={{ position: 'sticky', top: 0, zIndex: 20 }}
+            >
+              {visibleCols.map(function(col) {
+                const sortable  = SORTABLE.has(col.id);
+                const isActive  = sortable && sortCols.some(function(s) { return s.key === col.id; });
+                const isActions = col.id === 'actions';
+                const thStyle   = isMobile
+                  ? { position: 'relative' }
+                  : (function() {
+                      const w = getWidth(col);
+                      return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' };
+                    })();
+                return (
+                  <th
+                    key={col.id}
+                    style={thStyle}
+                    onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
+                    className={
+                      'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
+                      (isActions ? 'text-right ' : 'text-left ') +
+                      (sortable ? 'cursor-pointer ' : '') +
+                      (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
+                    }
+                    title={sortable ? 'Click to sort. Shift+click for multi-sort.' : undefined}
+                  >
+                    <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
+                    {!isMobile && (
+                      <ResizeHandle
+                        onResize={function(delta) { handleResize(col.id, delta); }}
+                        onDone={handleResizeDone}
+                      />
+                    )}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.length === 0 && (
+              <tr>
+                <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
+                  {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
+                </td>
+              </tr>
+            )}
+            {sorted.map(function(c) {
+              const isMeshRow = c.isMeshNode;
+              const isDisc    = c.connectionType === 'discovered';
               return (
-                <th
-                  key={col.id}
-                  style={thStyle}
-                  onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
+                <tr
+                  key={c.mac}
                   className={
-                    'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
-                    (isActions ? 'text-right ' : 'text-left ') +
-                    (sortable ? 'cursor-pointer ' : '') +
-                    (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
+                    'border-b border-gray-800 last:border-0 transition-colors ' +
+                    (isMeshRow ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
+                     isDisc    ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
+                                 'hover:bg-gray-800/50')
                   }
-                  title={sortable ? 'Click to sort. Shift+click for multi-sort.' : undefined}
                 >
-                  <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
-                  {!isMobile && (
-                    <ResizeHandle
-                      onResize={function(delta) { handleResize(col.id, delta); }}
-                      onDone={handleResizeDone}
-                    />
-                  )}
-                </th>
+                  {visibleCols.map(function(col) { return renderCell(c, col); })}
+                </tr>
               );
             })}
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.length === 0 && (
-            <tr>
-              <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
-                {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
-              </td>
-            </tr>
-          )}
-          {sorted.map(function(c) {
-            const isMeshRow = c.isMeshNode;
-            const isDisc    = c.connectionType === 'discovered';
-            return (
-              <tr
-                key={c.mac}
-                className={
-                  'border-b border-gray-800 last:border-0 transition-colors ' +
-                  (isMeshRow ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
-                   isDisc    ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
-                               'hover:bg-gray-800/50')
-                }
-              >
-                {visibleCols.map(function(col) { return renderCell(c, col); })}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
 
       {/* Footer */}
       <div className="flex-none px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
