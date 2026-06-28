@@ -188,7 +188,9 @@ async function poll() {
 
   prevClients    = currentClients;
   currentClients = freshClients;
-  mqttModule.publishClientStates(prevClients, currentClients, apStatus);
+  // Pass pinger.isOnline so publishClientStates can honour the pinger's
+  // offline verdict for discovered clients instead of blindly publishing online.
+  mqttModule.publishClientStates(prevClients, currentClients, apStatus, pinger.isOnline);
   broadcastState();
 }
 
