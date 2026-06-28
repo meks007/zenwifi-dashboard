@@ -643,26 +643,27 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  // Card layout:
-  //   Desktop: explicit pixel width (tableWidth + 2 for border) so the scroll
-  //   div content matches the card inner width exactly, eliminating phantom
-  //   scrollbars. maxWidth:100% clamps the card to the viewport; when the
-  //   table is wider the scroll div provides horizontal scrolling.
-  //   Mobile: full width, generous minHeight so rows are visible on short screens.
+  // Desktop: card width = tableWidth + 2px (1px border each side).
+  //   maxWidth:100% ensures the card never overflows the viewport.
+  //   The scroll div (overflow-auto) scrolls horizontally if the viewport
+  //   is narrower than the table. When the table fits exactly there is no
+  //   scrollbar: scroll div client width == table width, so no mismatch.
+  // Mobile: full width, height is intrinsic -- the page itself scrolls.
   const cardStyle = isMobile
-    ? { width: '100%', minWidth: 0, minHeight: '60vh' }
+    ? { width: '100%', minWidth: 0 }
     : { width: (tableWidth + 2) + 'px', maxWidth: '100%', minWidth: '400px' };
 
-  // The scroll div is the sole scroll container for both axes.
-  // Its height is bounded by the card's h-full within the viewport-locked
-  // App shell, so it scrolls vertically and thead sticky works inside it.
-  // Firefox scrollbar styling is applied inline (scrollbar-width/color).
+  // Desktop: scroll div is the sole scroll container for both axes.
+  //   Height is bounded by sm:h-full on the card inside the viewport-locked shell.
+  // Mobile: no overflow on the scroll div -- page scrolls.
   const scrollDivStyle = isMobile
-    ? { minHeight: '320px', scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' }
+    ? {}
     : { scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' };
 
   return (
-    <div style={cardStyle} className="h-full flex flex-col bg-gray-900 rounded-xl border border-gray-800">
+    // Desktop: sm:h-full fills the bounded flex-1 container from App.jsx.
+    // Mobile: no height constraint, content flows naturally.
+    <div style={cardStyle} className="flex flex-col bg-gray-900 rounded-xl border border-gray-800 sm:h-full">
 
       {/* Toolbar */}
       <div className="flex-none px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
@@ -740,10 +741,9 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         )}
       </div>
 
-      {/* Scroll area: sole scroll container for both axes.
-          Height is bounded by the card's h-full inside the viewport-locked
-          App shell. thead position:sticky top:0 works within this div. */}
-      <div className="flex-1 overflow-auto" style={scrollDivStyle}>
+      {/* Desktop: sole scroll container for both axes, bounded by sm:h-full.
+          Mobile: no overflow -- page scrolls. */}
+      <div className={isMobile ? 'w-full' : 'flex-1 overflow-auto'} style={scrollDivStyle}>
         <table
           className="text-sm border-collapse"
           style={isMobile
