@@ -19,6 +19,7 @@ const DEFAULT_COLUMNS = [
 const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
 const MOBILE_BP     = 640; // px, matches Tailwind sm:
+
 function loadColumnPrefs() {
   try {
     const raw = localStorage.getItem(LS_COLS_KEY);
@@ -123,6 +124,7 @@ function compareByKey(a, b, key) {
   const bv = b[key] != null ? String(b[key]).toLowerCase() : '';
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
+
 function fmtRelative(isoStr) {
   if (!isoStr) return null;
   const diffMs = Date.now() - new Date(isoStr).getTime();
@@ -193,9 +195,8 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
     </span>
   );
 }
-// ---- ColumnSettingsPanel ----
-// Each row has two checkboxes: desktop visibility and mobile visibility.
 
+// ---- ColumnSettingsPanel ----
 function ColumnSettingsPanel({ columns, onChange, onClose }) {
   const dragIdx = useRef(null);
   const [localCols, setLocalCols] = useState(columns);
@@ -242,7 +243,8 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
       return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true, mobileVisible: c.mobileVisible };
     }));
   }
-return (
+
+  return (
     <div className="absolute right-0 top-8 z-50 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
@@ -257,7 +259,7 @@ return (
         <span className="text-xs text-gray-500 w-12 text-center" title="Visible on mobile">Mobile</span>
       </div>
       <ul className="space-y-1">
-{localCols.map(function(col, idx) {
+        {localCols.map(function(col, idx) {
           return (
             <li
               key={col.id}
@@ -291,7 +293,7 @@ return (
                 }
                 title={col.mobileVisible ? 'Hide on mobile' : 'Show on mobile'}
               >
-<svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1 4l3 3 5-6"/>
                 </svg>
               </button>
@@ -311,9 +313,9 @@ return (
     </div>
   );
 }
-// ---- ResizeHandle ----
-// Only rendered on desktop; hidden on mobile to prevent accidental resizing.
 
+// ---- ResizeHandle ----
+// Only rendered on desktop; not shown on mobile.
 function ResizeHandle({ onResize, onDone }) {
   const startX = useRef(null);
 
@@ -349,7 +351,6 @@ function ResizeHandle({ onResize, onDone }) {
 const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
 
 // ---- ClientTable ----
-
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch]               = useState('');
   const [sortCols, setSortCols]           = useState(DEFAULT_SORT);
@@ -359,7 +360,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [meshOnly, setMeshOnly]           = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const settingsRef = useRef(null);
-// Detect mobile breakpoint reactively.
+
+  // Detect mobile breakpoint reactively.
   const [isMobile, setIsMobile] = useState(function() { return window.innerWidth < MOBILE_BP; });
   useEffect(function() {
     function onResize() { setIsMobile(window.innerWidth < MOBILE_BP); }
@@ -408,13 +410,13 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     const id = setInterval(function() { setTick(function(n) { return n + 1; }); }, 30000);
     return function() { clearInterval(id); };
   }, []);
-// Which columns to show depends on the current breakpoint.
+
+  // Which columns to show depends on the current breakpoint.
   const visibleCols = columns.filter(function(c) {
     return isMobile ? c.mobileVisible : c.visible;
   });
 
-  // On desktop: fixed pixel widths, card hugs the table via min-content.
-  // On mobile: auto layout, card fills full width.
+  // Desktop: fixed px widths. Mobile: auto layout.
   const tableWidth = isMobile
     ? null
     : visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
@@ -465,7 +467,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
     return 0;
   });
-function toggleSort(key, event) {
+
+  function toggleSort(key, event) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
       const idx = prev.findIndex(function(s) { return s.key === key; });
@@ -500,7 +503,7 @@ function toggleSort(key, event) {
   activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
   activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
 
-  // On mobile columns have no fixed width (browser auto-sizes them).
+  // On mobile columns have no fixed width; browser auto-sizes.
   // On desktop each cell gets the stored/default px width.
   function renderCell(c, col) {
     const isDiscovered = c.connectionType === 'discovered';
@@ -542,7 +545,8 @@ function toggleSort(key, event) {
             {c.ip || <span className="text-gray-600">n/a</span>}
           </td>
         );
-case 'apName':
+
+      case 'apName':
         return (
           <td key="apName" style={style} className="px-3 py-3 text-left overflow-hidden">
             <button
@@ -580,7 +584,8 @@ case 'apName':
             {fmtBytes(c.tx_bytes) !== null ? fmtBytes(c.tx_bytes) : <span className="text-gray-600">n/a</span>}
           </td>
         );
-case 'rx_bytes':
+
+      case 'rx_bytes':
         return (
           <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400">
             {fmtBytes(c.rx_bytes) !== null ? fmtBytes(c.rx_bytes) : <span className="text-gray-600">n/a</span>}
@@ -623,95 +628,95 @@ case 'rx_bytes':
     }
   }
 
-  // Card width:
-  //   Desktop: min-content so the card exactly wraps the table without adding
-  //            extra pixels that would cause a phantom scrollbar. overflow-x:auto
-  //            on the card itself handles horizontal scrolling when the viewport
-  //            is narrower than the table, and does NOT trap position:sticky.
-  //   Mobile:  100% width, auto table layout.
-  const cardStyle = isMobile
-    ? { width: '100%' }
-    : { width: 'min-content', overflowX: 'auto' };
+  // The card fills the full height of its parent (the tab content area).
+  // Layout: flex-col with three layers:
+  //   1. toolbar  - flex-none, never scrolls
+  //   2. scroll   - flex-1, overflow: auto in both axes; thead sticky within this
+  //   3. footer   - flex-none, never scrolls
+  //
+  // On desktop the table uses fixed layout + explicit column widths.
+  // On mobile the table uses auto layout + full width, no ResizeHandle.
+  return (
+    <div className="h-full flex flex-col bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
 
-return (
-    <div className="flex justify-center w-full">
-      {/* overflow-x is on the card, not a nested div, so position:sticky on
-          thead works relative to the page scroll axis (no trapped context). */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800" style={cardStyle}>
-        <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
-              {isMobile && (
-                <span className="text-xs text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5">Mobile view</span>
-              )}
-              {!isDefaultSort && (
-                <button
-                  onClick={resetSort}
-                  className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
-                  title="Reset to default sort"
-                >
-                  Reset sort
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="relative" ref={settingsRef}>
-                <button
-                  onClick={function() { setShowSettings(function(v) { return !v; }); }}
-                  title="Configure columns"
-                  className={
-                    'p-1.5 rounded-lg border transition-colors ' +
-                    (showSettings
-                      ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
-                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
-                  }
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <rect x="1" y="2" width="4" height="12" rx="0.5"/>
-                    <rect x="6" y="2" width="4" height="12" rx="0.5"/>
-                    <rect x="11" y="2" width="4" height="12" rx="0.5"/>
-                  </svg>
-                </button>
-{showSettings && (
-                  <ColumnSettingsPanel
-                    columns={columns}
-                    onChange={setColumns}
-                    onClose={function() { setShowSettings(false); }}
-                  />
-                )}
-              </div>
-              <input
-                type="text"
-                placeholder="Search..."
-                value={search}
-                onChange={function(e) { setSearch(e.target.value); }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-40 sm:w-64"
-              />
-              {hasFilter && (
-                <button
-                  onClick={clearAll}
-                  title="Clear all filters"
-                  className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
-                >
-                  &times;
-                </button>
-              )}
-            </div>
+      {/* Toolbar */}
+      <div className="flex-none px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
+            {isMobile && (
+              <span className="text-xs text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5">Mobile view</span>
+            )}
+            {!isDefaultSort && (
+              <button
+                onClick={resetSort}
+                className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
+                title="Reset to default sort"
+              >
+                Reset sort
+              </button>
+            )}
           </div>
-          {chips.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {chips.map(function(chip, i) {
-                return (
-                  <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
-                    {chip.label}
-                    <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
-                  </span>
-                );
-              })}
+          <div className="flex items-center gap-2">
+            <div className="relative" ref={settingsRef}>
+              <button
+                onClick={function() { setShowSettings(function(v) { return !v; }); }}
+                title="Configure columns"
+                className={
+                  'p-1.5 rounded-lg border transition-colors ' +
+                  (showSettings
+                    ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
+                }
+              >
+                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="1" y="2" width="4" height="12" rx="0.5"/>
+                  <rect x="6" y="2" width="4" height="12" rx="0.5"/>
+                  <rect x="11" y="2" width="4" height="12" rx="0.5"/>
+                </svg>
+              </button>
+              {showSettings && (
+                <ColumnSettingsPanel
+                  columns={columns}
+                  onChange={setColumns}
+                  onClose={function() { setShowSettings(false); }}
+                />
+              )}
             </div>
-          )}
+            <input
+              type="text"
+              placeholder="Search..."
+              value={search}
+              onChange={function(e) { setSearch(e.target.value); }}
+              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-40 sm:w-64"
+            />
+            {hasFilter && (
+              <button
+                onClick={clearAll}
+                title="Clear all filters"
+                className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
+              >
+                &times;
+              </button>
+            )}
+          </div>
         </div>
+        {chips.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {chips.map(function(chip, i) {
+              return (
+                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
+                  {chip.label}
+                  <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Scroll area: both axes. thead is sticky within this container. */}
+      <div className="flex-1 overflow-auto">
         <table
           className="text-sm border-collapse"
           style={isMobile
@@ -775,8 +780,8 @@ return (
               </tr>
             )}
             {sorted.map(function(c) {
-              const isMeshRow  = c.isMeshNode;
-              const isDisc     = c.connectionType === 'discovered';
+              const isMeshRow = c.isMeshNode;
+              const isDisc    = c.connectionType === 'discovered';
               return (
                 <tr
                   key={c.mac}
@@ -793,9 +798,11 @@ return (
             })}
           </tbody>
         </table>
-        <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
-          Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
-        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="flex-none px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
+        Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
       </div>
     </div>
   );
