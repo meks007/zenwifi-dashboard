@@ -21,8 +21,9 @@
 //     call will broadcast the entry live. No queue/flush needed -- clients
 //     receive the tail on connect and live entries thereafter.
 //
-//   setDebug(bool)
-//     Enable/disable debug-level output.
+//   setDebug(bool) / isDebug()
+//     Enable/disable debug-level output at runtime. isDebug() returns the
+//     current state so callers (e.g. the API route) can read it back.
 //
 //   info / warn / error / debug
 //     Standard log methods.
@@ -156,6 +157,10 @@ function setDebug(enabled) {
   debugEnabled = !!enabled;
 }
 
+function isDebug() {
+  return debugEnabled;
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -187,4 +192,4 @@ function debug(msg, meta) {
   pushLine('debug', msg, meta);
 }
 
-module.exports = { info, warn, error, debug, tail, setBroadcaster, setDebug, initFileLog };
+module.exports = { info, warn, error, debug, tail, setBroadcaster, setDebug, isDebug, initFileLog };
