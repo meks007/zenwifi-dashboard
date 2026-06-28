@@ -158,8 +158,76 @@ function publishClientStates(prevClients, currentClients, apStatus, pingerIsOnli
   });
 }
 
+/**
+ * Publish an HA MQTT Discovery config for a "Disconnect" button entity.
+ * The device block uses only connections: [["mac", ...]] so HA merges this
+ * button into the existing AsusRouter device for that client rather than
+ * creating a new device entry.
+ *
+ * @param {string} mac          Client MAC address (any separator/case -- normalised internally)
+ * @param {object} haDiscovery  Parsed ha_discovery config from getHaDiscoveryConfig()
+ */
+function publishDiscovery(mac, haDiscovery) {
+  if (!haDiscovery || !haDiscovery.enabled) return;
+  if (!mqttClient || !mqttClient.connected) return;
+
+  // Normalise MAC to lowercase colon-separated (matches AsusRouter device registry key).
+  var normMac  = mac.toLowerCase().replace(/[^0-9a-f]/g, function (c, i) {
+    // Preserve separators at positions 2,5,8,11,14 -- rebuild cleanly instead.
+    return '';
+  });
+  // Rebuild as xx:xx:xx:xx:xx:xx
+  normMac = normMac.match(/.{1,2}/g).join(':');
+
+  var macSafe  = normMac.replace(/:/g, '_');
+  var prefix   = getPrefix();
+  var haPrefix = haDiscovery.prefix || 'homeassistant';
+
+  var configTopic = haPrefix + '/button/zenwifi_' + macSafe + '/config';
+
+  var payload = {
+    name:                    'Disconnect',
+    unique_id:               'zenwifi_disconnect_' + macSafe,
+    command_topic:           prefix + '/clients/' + normMac + '/disconnect',
+    payload_press:           'disconnect',
+    entity_category:         'config',
+    device_class:            'restart',
+    availability_topic:      prefix + '/clients/' + normMac + '/state',
+    payload_available:       'online',
+    payload_not_available:   'offline',
+    device: {
+      connections: [['mac', normMac]],
+    },
+    origin: {
+      name: 'ZenWifi Dashboard',
+    },
+  };
+
+  mqttClient.publish(configTopic, JSON.stringify(payload), { retain: true, qos: 1 });
+}
+
+/**
+ * Remove the HA MQTT Discovery config for a client by publishing an empty
+ * retained payload. HA will remove the button entity from the device.
+ *
+ * @param {string} mac          Client MAC address
+ * @param {object} haDiscovery  Parsed ha_discovery config from getHaDiscoveryConfig()
+ */
+function unpublishDiscovery(mac, haDiscovery) {
+  if (!haDiscovery || !haDiscovery.enabled) return;
+  if (!mqttClient || !mqttClient.connected) return;
+
+  var normMac  = mac.toLowerCase().replace(/[^0-9a-f]/g, '');
+  normMac      = normMac.match(/.{1,2}/g).join(':');
+  var macSafe  = normMac.replace(/:/g, '_');
+  var haPrefix = haDiscovery.prefix || 'homeassistant';
+
+  var configTopic = haPrefix + '/button/zenwifi_' + macSafe + '/config';
+  mqttClient.publish(configTopic, '', { retain: true, qos: 1 });
+}
+
 function isConnected() {
   return !!(mqttClient && mqttClient.connected);
 }
 
-module.exports = { connect, publishClientStates, isConnected, publish };
+module.exports = { connect, publishClientStates, publishDiscovery, unpublishDiscovery, isConnected, publish };
