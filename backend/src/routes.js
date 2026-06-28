@@ -36,6 +36,21 @@ function registerRoutes(app, deps) {
     var n = (req.query.all === '1' || req.query.all === 'true') ? 0 : parseInt(req.query.n, 10) || 100;
     res.json({ entries: logger.tail(n) });
   });
+
+  // GET /api/debug          -- return current debug mode state
+  // POST /api/debug         -- toggle debug mode: { "enabled": true|false }
+  app.get('/api/debug', function(_req, res) {
+    res.json({ debug: logger ? logger.isDebug() : false });
+  });
+
+  app.post('/api/debug', function(req, res) {
+    if (!logger) return res.status(503).json({ error: 'logger not available' });
+    var enabled = !!req.body.enabled;
+    logger.setDebug(enabled);
+    logger.info('[Debug] Debug logging ' + (enabled ? 'enabled' : 'disabled') + ' via API');
+    if (deps.broadcast) deps.broadcast({ type: 'debug_mode', enabled: enabled });
+    res.json({ debug: enabled });
+  });
 }
 
 module.exports = { registerRoutes };
