@@ -10,7 +10,7 @@ import { compareByKey, macOui } from './clientTableUtils.js';
 import { ColumnSettingsPanel, ResizeHandle } from './ClientTableControls.jsx';
 import ClientTableCell from './ClientTableCell.jsx';
 
-export default function ClientTable({ clients, disconnecting, onDisconnect, pinging, onPing, search, onSearchChange }) {
+export default function ClientTable({ clients, disconnecting, onDisconnect, pinging, onPing, search, onSearchChange, onLogSearch }) {
   const [sortCols, setSortCols]           = useState(function() { return loadSortPrefs() || DEFAULT_SORT; });
   const [activeAps, setActiveAps]         = useState(new Set());
   const [activeVendors, setActiveVendors] = useState(new Set());
@@ -64,7 +64,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
   const [, setTick] = useState(0);
   useEffect(function() {
     const id = setInterval(function() { setTick(function(n) { return n + 1; }); }, 30000);
-    return function() { clearInterval(id); };
+    return function() { clearInterval(id); }
   }, []);
 
   // Which columns to show depends on the current breakpoint.
@@ -198,27 +198,37 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
             </svg>
             <input
               type="text"
+              placeholder="Search clients..."
               value={search}
               onChange={function(e) { onSearchChange(e.target.value); }}
-              placeholder="Search clients..."
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
+            {search && (
+              <button
+                onClick={function() { onSearchChange(''); }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                title="Clear search"
+              >
+                &times;
+              </button>
+            )}
           </div>
+
           <button
             onClick={function() { setShowSettings(function(v) { return !v; }); }}
             title="Column settings"
-            className={'p-1.5 rounded-lg border transition-colors ' + (showSettings ? 'bg-blue-900/40 border-blue-600/50 text-blue-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')}
+            className={'p-1.5 rounded-lg border transition-colors ' + (showSettings ? 'bg-blue-900/40 border-blue-700 text-blue-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200')}
           >
             <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
-              <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
-              <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.474l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
+              <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
             </svg>
           </button>
+
           {!isDefaultSort && (
             <button
               onClick={resetSort}
               title="Reset sort"
-              className="p-1.5 rounded-lg border bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
+              className="p-1.5 rounded-lg border bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
             >
               <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
                 <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
@@ -226,12 +236,13 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
               </svg>
             </button>
           )}
+
           {hasFilter && (
             <button
               onClick={clearAll}
-              className="text-xs text-gray-500 hover:text-gray-300 transition-colors whitespace-nowrap"
+              className="text-xs px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 text-gray-400 hover:text-gray-200 transition-colors whitespace-nowrap"
             >
-              Clear filters
+              Clear all
             </button>
           )}
         </div>
@@ -240,9 +251,12 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
           <div className="flex flex-wrap gap-1.5">
             {chips.map(function(chip, i) {
               return (
-                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-700/50 text-blue-300 text-xs rounded-full px-2 py-0.5">
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 text-xs bg-blue-900/30 border border-blue-700/40 text-blue-300 rounded-full px-2 py-0.5"
+                >
                   {chip.label}
-                  <button onClick={chip.remove} className="text-blue-400 hover:text-blue-200 leading-none">&times;</button>
+                  <button onClick={chip.remove} className="hover:text-white leading-none">&times;</button>
                 </span>
               );
             })}
@@ -258,11 +272,11 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
         )}
       </div>
 
-      {/* Table scroll container */}
+      {/* Table scroll area */}
       <div className="flex-1 overflow-y-auto" style={scrollDivStyle}>
         <table style={{ width: tableWidth, tableLayout: isMobile ? 'auto' : 'fixed', borderCollapse: 'collapse' }}>
-          <thead className="sticky top-0 z-10 bg-gray-900">
-            <tr className="border-b border-gray-800">
+          <thead className="sticky top-0 bg-gray-900 z-10">
+            <tr>
               {visibleCols.map(function(col) {
                 const sortable = SORTABLE.has(col.id);
                 const style    = isMobile ? {} : { width: getWidth(col) + 'px', minWidth: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px', position: 'relative' };
@@ -322,6 +336,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
                           onApToggle={function(v) { toggleFacet(setActiveAps, v); }}
                           onVendorToggle={function(v) { toggleFacet(setActiveVendors, v); }}
                           onOuiToggle={function(v) { toggleFacet(setActiveOuis, v); }}
+                          onLogSearch={onLogSearch}
                         />
                       );
                     })}
