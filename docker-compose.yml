@@ -6,6 +6,7 @@ services:
       - "3001:3001"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+      - data:/data
     environment:
       - CONFIG_PATH=/app/config.yaml
       - PORT=3001
@@ -17,3 +18,6 @@ services:
       - "3000:80"
     depends_on:
       - backend
+
+volumes:
+  data:
