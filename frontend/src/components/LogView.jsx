@@ -14,19 +14,52 @@ const LEVEL_BG = {
   debug: '',
 };
 
-// Parse a log message into alternating plain-text and [UNIT] segments.
-// Returns an array of { type: 'text'|'unit', value: string }.
-function parseMsg(msg) {
-  var parts  = [];
-  var re     = /\[([^\]]+)\]/g;
-  var last   = 0;
+// Split a plain-text segment into sub-parts: plain text, MAC, or IP tokens.
+function splitTextTokens(text) {
+  var parts = [];
+  var re    = /\b([0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})\b|\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/gi;
+  var last  = 0;
   var match;
-  while ((match = re.exec(msg)) !== null) {
-    if (match.index > last) parts.push({ type: 'text', value: msg.slice(last, match.index) });
-    parts.push({ type: 'unit', value: match[0], tag: match[1] });
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > last) parts.push({ type: 'text', value: text.slice(last, match.index) });
+    if (match[1]) {
+      parts.push({ type: 'mac', value: match[1] });
+    } else {
+      parts.push({ type: 'ip', value: match[2] });
+    }
     last = re.lastIndex;
   }
-  if (last < msg.length) parts.push({ type: 'text', value: msg.slice(last) });
+  if (last < text.length) parts.push({ type: 'text', value: text.slice(last) });
+  return parts;
+}
+
+// Parse a log message.
+// Only the FIRST [TAG] token is made clickable (unit type).
+// Subsequent [TAG] tokens are rendered as plain text.
+// Within plain-text segments, MACs and IPs are detected and made clickable.
+function parseMsg(msg) {
+  var parts     = [];
+  var re        = /\[([^\]]+)\]/g;
+  var last      = 0;
+  var match;
+  var firstUnit = false;
+
+  while ((match = re.exec(msg)) !== null) {
+    if (match.index > last) {
+      splitTextTokens(msg.slice(last, match.index)).forEach(function(p) { parts.push(p); });
+    }
+    if (!firstUnit) {
+      parts.push({ type: 'unit', value: match[0], tag: match[1] });
+      firstUnit = true;
+    } else {
+      // Subsequent bracket groups are plain text, not clickable.
+      parts.push({ type: 'text', value: match[0] });
+    }
+    last = re.lastIndex;
+  }
+  if (last < msg.length) {
+    splitTextTokens(msg.slice(last)).forEach(function(p) { parts.push(p); });
+  }
   return parts;
 }
 
@@ -54,10 +87,9 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     }
   }
 
-  // Clicking a [UNIT] tag sets the search filter to that tag text.
-  // Clicking the same tag again clears the filter.
-  function handleUnitClick(tag) {
-    onSearchChange(search === tag ? '' : tag);
+  // Clicking a token sets the search filter to that value; clicking again clears it.
+  function handleTokenClick(value) {
+    onSearchChange(search === value ? '' : value);
   }
 
   return (
@@ -136,13 +168,49 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
                     return (
                       <button
                         key={pi}
-                        onClick={function() { handleUnitClick(part.tag); }}
+                        onClick={function() { handleTokenClick(part.tag); }}
                         title={active ? 'Clear filter' : 'Filter by ' + part.value}
                         className={
                           'font-semibold rounded px-0.5 transition-colors ' +
                           (active
                             ? 'bg-blue-600/40 text-blue-200 ring-1 ring-blue-500/50'
                             : 'text-blue-400 hover:bg-blue-900/40 hover:text-blue-200')
+                        }
+                      >
+                        {part.value}
+                      </button>
+                    );
+                  }
+                  if (part.type === 'mac') {
+                    var macActive = search === part.value;
+                    return (
+                      <button
+                        key={pi}
+                        onClick={function() { handleTokenClick(part.value); }}
+                        title={macActive ? 'Clear filter' : 'Filter by MAC ' + part.value}
+                        className={
+                          'font-mono rounded px-0.5 transition-colors ' +
+                          (macActive
+                            ? 'bg-purple-600/40 text-purple-200 ring-1 ring-purple-500/50'
+                            : 'text-purple-400 hover:bg-purple-900/40 hover:text-purple-200')
+                        }
+                      >
+                        {part.value}
+                      </button>
+                    );
+                  }
+                  if (part.type === 'ip') {
+                    var ipActive = search === part.value;
+                    return (
+                      <button
+                        key={pi}
+                        onClick={function() { handleTokenClick(part.value); }}
+                        title={ipActive ? 'Clear filter' : 'Filter by IP ' + part.value}
+                        className={
+                          'font-mono rounded px-0.5 transition-colors ' +
+                          (ipActive
+                            ? 'bg-green-600/40 text-green-200 ring-1 ring-green-500/50'
+                            : 'text-green-400 hover:bg-green-900/40 hover:text-green-200')
                         }
                       >
                         {part.value}
