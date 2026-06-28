@@ -46,6 +46,14 @@ show_ipv6: false
 # frontend until they respond again. Default: 5.
 ping_interval_minutes: 5
 
+# How often (in minutes) to run the housekeeping task.
+# Housekeeping scans the database for client records that no longer correspond to
+# an active client. Each stale record triggers an MQTT offline publish (state +
+# last_seen) and is then removed from the database. This cleans up records left
+# behind when the server was restarted while clients were already offline.
+# Default: 60.
+housekeeping_interval_minutes: 60
+
 access_points:
   # Mark exactly one AP as master: true. The master node maintains
   # /tmp/clientlist.json which is the primary source for client IPs and
