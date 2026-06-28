@@ -19,7 +19,6 @@ const DEFAULT_COLUMNS = [
 const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
 const MOBILE_BP     = 640; // px, matches Tailwind sm:
-
 function loadColumnPrefs() {
   try {
     const raw = localStorage.getItem(LS_COLS_KEY);
@@ -74,7 +73,6 @@ const DEFAULT_SORT = [{ key: 'ip', dir: 'asc' }];
 const MIN_COL_WIDTH = 50;
 
 // ---- Helpers ----
-
 function rssiColor(rssi) {
   if (rssi === null || rssi === undefined) return 'text-gray-500';
   if (rssi >= -60) return 'text-green-400';
@@ -125,7 +123,6 @@ function compareByKey(a, b, key) {
   const bv = b[key] != null ? String(b[key]).toLowerCase() : '';
   return av < bv ? -1 : av > bv ? 1 : 0;
 }
-
 function fmtRelative(isoStr) {
   if (!isoStr) return null;
   const diffMs = Date.now() - new Date(isoStr).getTime();
@@ -146,7 +143,6 @@ function fmtAbsolute(isoStr) {
 }
 
 // ---- VendorCell ----
-
 function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshClick, onVendorClick, onOuiClick }) {
   if (client.isMeshNode) {
     return (
@@ -197,7 +193,6 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
     </span>
   );
 }
-
 // ---- ColumnSettingsPanel ----
 // Each row has two checkboxes: desktop visibility and mobile visibility.
 
@@ -247,8 +242,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
       return { id: c.id, label: c.label, defaultWidth: c.defaultWidth, visible: true, mobileVisible: c.mobileVisible };
     }));
   }
-
-  return (
+return (
     <div className="absolute right-0 top-8 z-50 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
@@ -263,7 +257,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
         <span className="text-xs text-gray-500 w-12 text-center" title="Visible on mobile">Mobile</span>
       </div>
       <ul className="space-y-1">
-        {localCols.map(function(col, idx) {
+{localCols.map(function(col, idx) {
           return (
             <li
               key={col.id}
@@ -297,7 +291,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
                 }
                 title={col.mobileVisible ? 'Hide on mobile' : 'Show on mobile'}
               >
-                <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+<svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1 4l3 3 5-6"/>
                 </svg>
               </button>
@@ -317,8 +311,8 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
     </div>
   );
 }
-
 // ---- ResizeHandle ----
+// Only rendered on desktop; hidden on mobile to prevent accidental resizing.
 
 function ResizeHandle({ onResize, onDone }) {
   const startX = useRef(null);
@@ -365,8 +359,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [meshOnly, setMeshOnly]           = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const settingsRef = useRef(null);
-
-  // Detect mobile breakpoint reactively.
+// Detect mobile breakpoint reactively.
   const [isMobile, setIsMobile] = useState(function() { return window.innerWidth < MOBILE_BP; });
   useEffect(function() {
     function onResize() { setIsMobile(window.innerWidth < MOBILE_BP); }
@@ -415,14 +408,16 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     const id = setInterval(function() { setTick(function(n) { return n + 1; }); }, 30000);
     return function() { clearInterval(id); };
   }, []);
-
-  // Which columns to show depends on the current breakpoint.
+// Which columns to show depends on the current breakpoint.
   const visibleCols = columns.filter(function(c) {
     return isMobile ? c.mobileVisible : c.visible;
   });
 
-  // Total table width (px) = sum of visible column widths.
-  const tableWidth = visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
+  // On desktop the card width = sum of visible column widths (fixed layout).
+  // On mobile the card fills the viewport and columns are auto-sized.
+  const tableWidth = isMobile
+    ? null
+    : visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
 
   function toggleFacet(setter, value) {
     setter(function(prev) {
@@ -470,8 +465,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
     return 0;
   });
-
-  function toggleSort(key, event) {
+function toggleSort(key, event) {
     const shift = event && event.shiftKey;
     setSortCols(function(prev) {
       const idx = prev.findIndex(function(s) { return s.key === key; });
@@ -506,11 +500,15 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
   activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
 
+  // On mobile columns have no fixed width (browser auto-sizes them).
+  // On desktop each cell gets the stored/default px width.
   function renderCell(c, col) {
     const isDiscovered = c.connectionType === 'discovered';
     const isMesh       = c.isMeshNode;
-    const w            = getWidth(col);
-    const style        = { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' };
+    const style        = isMobile ? {} : (function() {
+      const w = getWidth(col);
+      return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' };
+    })();
 
     switch (col.id) {
       case 'mac':
@@ -544,8 +542,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             {c.ip || <span className="text-gray-600">n/a</span>}
           </td>
         );
-
-      case 'apName':
+case 'apName':
         return (
           <td key="apName" style={style} className="px-3 py-3 text-left overflow-hidden">
             <button
@@ -583,8 +580,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             {fmtBytes(c.tx_bytes) !== null ? fmtBytes(c.tx_bytes) : <span className="text-gray-600">n/a</span>}
           </td>
         );
-
-      case 'rx_bytes':
+case 'rx_bytes':
         return (
           <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400">
             {fmtBytes(c.rx_bytes) !== null ? fmtBytes(c.rx_bytes) : <span className="text-gray-600">n/a</span>}
@@ -627,15 +623,13 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     }
   }
 
-  // The outer card uses inline-block + mx-auto so its width exactly matches the table.
-  // tableWidth is the JS-computed sum of visible column widths.
-  const cardStyle = { width: tableWidth + 'px' };
-
-  return (
+  // On desktop the card is exactly as wide as the sum of column widths.
+  // On mobile it fills the full available width.
+  const cardStyle = isMobile ? { width: '100%' } : { width: tableWidth + 'px' };
+return (
     <div className="flex justify-center w-full">
       <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden" style={cardStyle}>
-
-        {/* Toolbar - same width as the card */}
+{/* Toolbar - same width as the card */}
         <div className="px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-3 flex-wrap">
@@ -671,7 +665,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                     <rect x="11" y="2" width="4" height="12" rx="0.5"/>
                   </svg>
                 </button>
-                {showSettings && (
+{showSettings && (
                   <ColumnSettingsPanel
                     columns={columns}
                     onChange={setColumns}
@@ -710,34 +704,42 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             </div>
           )}
         </div>
-
-        {/* Table - overflows horizontally if viewport is narrower than tableWidth.
-            The sticky header sticks relative to the page scroll (not this overflow container)
-            because overflow-x alone does not create a new scroll context for the Y axis. */}
+{/* Table - on desktop overflows horizontally when viewport is narrower than tableWidth.
+            On mobile the table fills 100% width with auto-sized columns. */}
         <div style={{ overflowX: 'auto' }}>
           <table
             className="text-sm border-collapse"
-            style={{ tableLayout: 'fixed', width: tableWidth + 'px' }}
+            style={isMobile
+              ? { tableLayout: 'auto', width: '100%' }
+              : { tableLayout: 'fixed', width: tableWidth + 'px' }
+            }
           >
-            <colgroup>
-              {visibleCols.map(function(col) {
-                return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
-              })}
-            </colgroup>
+            {!isMobile && (
+              <colgroup>
+                {visibleCols.map(function(col) {
+                  return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
+                })}
+              </colgroup>
+            )}
             <thead>
               <tr
-                className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
+className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
                 style={{ position: 'sticky', top: 0, zIndex: 20 }}
               >
                 {visibleCols.map(function(col) {
                   const sortable  = SORTABLE.has(col.id);
                   const isActive  = sortable && sortCols.some(function(s) { return s.key === col.id; });
                   const isActions = col.id === 'actions';
-                  const w         = getWidth(col);
+                  const thStyle   = isMobile
+                    ? { position: 'relative' }
+                    : (function() {
+                        const w = getWidth(col);
+                        return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' };
+                      })();
                   return (
                     <th
                       key={col.id}
-                      style={{ width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' }}
+                      style={thStyle}
                       onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
                       className={
                         'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
@@ -748,10 +750,12 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
                       title={sortable ? 'Click to sort. Shift+click for multi-sort.' : undefined}
                     >
                       <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
-                      <ResizeHandle
-                        onResize={function(delta) { handleResize(col.id, delta); }}
-                        onDone={handleResizeDone}
-                      />
+                      {!isMobile && (
+                        <ResizeHandle
+                          onResize={function(delta) { handleResize(col.id, delta); }}
+                          onDone={handleResizeDone}
+                        />
+                      )}
                     </th>
                   );
                 })}
@@ -761,7 +765,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               {sorted.length === 0 && (
                 <tr>
                   <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
-                    {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
+{clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
                   </td>
                 </tr>
               )}
@@ -785,8 +789,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             </tbody>
           </table>
         </div>
-
-        <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
+<div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
           Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
         </div>
       </div>
