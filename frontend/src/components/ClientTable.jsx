@@ -18,6 +18,7 @@ const DEFAULT_COLUMNS = [
 
 const LS_COLS_KEY   = 'zenwifi_columns_v1';
 const LS_WIDTHS_KEY = 'zenwifi_col_widths_v1';
+const LS_SORT_KEY   = 'zenwifi_sort_v1';
 const MOBILE_BP     = 640; // px, matches Tailwind sm:
 
 // matchMedia singleton -- avoids spurious breakpoint flips caused by mobile
@@ -79,6 +80,20 @@ function loadWidthPrefs() {
 
 function saveWidthPrefs(widths) {
   try { localStorage.setItem(LS_WIDTHS_KEY, JSON.stringify(widths)); } catch (_e) {}
+}
+
+function loadSortPrefs() {
+  try {
+    const raw = localStorage.getItem(LS_SORT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    return parsed;
+  } catch (_e) { return null; }
+}
+
+function saveSortPrefs(sortCols) {
+  try { localStorage.setItem(LS_SORT_KEY, JSON.stringify(sortCols)); } catch (_e) {}
 }
 
 const DEFAULT_SORT  = [{ key: 'ip', dir: 'asc' }];
@@ -264,100 +279,86 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
         <div className="flex gap-2 items-center">
           <button onClick={resetToDefault} className="text-xs text-gray-500 hover:text-gray-300 transition-colors" title="Reset to default">Reset</button>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none" title="Close">&times;</button>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none">&times;</button>
         </div>
       </div>
-      <div className="flex items-center gap-2 mb-2 px-2">
-        <span className="text-xs text-gray-600 flex-1 pl-6">Column</span>
-        <span className="text-xs text-gray-500 w-12 text-center" title="Visible on desktop">Desktop</span>
-        <span className="text-xs text-gray-500 w-12 text-center" title="Visible on mobile">Mobile</span>
-      </div>
-      <ul className="space-y-1">
+      <div className="flex flex-col gap-1">
         {localCols.map(function(col, idx) {
           return (
-            <li
+            <div
               key={col.id}
               draggable
               onDragStart={function(e) { onDragStart(e, idx); }}
               onDragOver={function(e) { onDragOver(e, idx); }}
               onDragEnd={onDragEnd}
-              className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-gray-800 cursor-grab active:cursor-grabbing group"
+              className="flex items-center gap-2 py-1 px-1 rounded hover:bg-gray-700/40 cursor-grab active:cursor-grabbing"
             >
-              <span className="text-gray-600 group-hover:text-gray-400 transition-colors text-xs leading-none">::</span>
-              <span className={'text-xs flex-1 ' + (col.visible || col.mobileVisible ? 'text-gray-200' : 'text-gray-500')}>
-                {col.label}
-              </span>
-              <button
-                onClick={function() { toggleVisible(col.id); }}
-                className={
-                  'w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
-                  (col.visible ? 'bg-blue-600 border-blue-500 text-white' : 'bg-gray-700 border-gray-600 text-transparent')
-                }
-                title={col.visible ? 'Hide on desktop' : 'Show on desktop'}
-              >
-                <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 4l3 3 5-6"/>
-                </svg>
-              </button>
-              <button
-                onClick={function() { toggleMobileVisible(col.id); }}
-                className={
-                  'w-5 h-5 rounded border flex-shrink-0 flex items-center justify-center transition-colors ' +
-                  (col.mobileVisible ? 'bg-emerald-600 border-emerald-500 text-white' : 'bg-gray-700 border-gray-600 text-transparent')
-                }
-                title={col.mobileVisible ? 'Hide on mobile' : 'Show on mobile'}
-              >
-                <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 4l3 3 5-6"/>
-                </svg>
-              </button>
-            </li>
+              <span className="text-gray-600 text-xs select-none">&#8597;</span>
+              <span className="flex-1 text-xs text-gray-300">{col.label}</span>
+              <label className="flex items-center gap-1 cursor-pointer" title="Show on desktop">
+                <input
+                  type="checkbox"
+                  checked={col.visible}
+                  onChange={function() { toggleVisible(col.id); }}
+                  className="accent-blue-500 w-3 h-3"
+                />
+                <span className="text-xs text-gray-500 hidden sm:inline">Desktop</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer" title="Show on mobile">
+                <input
+                  type="checkbox"
+                  checked={col.mobileVisible}
+                  onChange={function() { toggleMobileVisible(col.id); }}
+                  className="accent-purple-500 w-3 h-3"
+                />
+                <span className="text-xs text-gray-500 hidden sm:inline">Mobile</span>
+              </label>
+            </div>
           );
         })}
-      </ul>
-      <div className="flex items-center gap-4 mt-2 px-2">
-        <span className="flex items-center gap-1 text-xs text-gray-600">
-          <span className="inline-block w-3 h-3 rounded bg-blue-600 border border-blue-500"></span> Desktop
-        </span>
-        <span className="flex items-center gap-1 text-xs text-gray-600">
-          <span className="inline-block w-3 h-3 rounded bg-emerald-600 border border-emerald-500"></span> Mobile
-        </span>
-        <span className="text-xs text-gray-600 flex-1 text-right">Drag to reorder</span>
       </div>
     </div>
   );
 }
 
 // ---- ResizeHandle ----
-function ResizeHandle({ onResize, onDone }) {
-  const startX  = useRef(null);
-  const startVal = useRef(null);
+function ResizeHandle({ colId, onResize, onDone }) {
+  const startX   = useRef(null);
+  const startW   = useRef(null);
+  const dragging = useRef(false);
 
   function onMouseDown(e) {
     e.preventDefault();
-    startX.current = e.clientX;
-    startVal.current = 0;
-    function onMove(ev) {
+    e.stopPropagation();
+    startX.current   = e.clientX;
+    dragging.current = true;
+
+    function onMouseMove(ev) {
+      if (!dragging.current) return;
       const delta = ev.clientX - startX.current;
-      onResize(delta - startVal.current);
-      startVal.current = delta;
+      startX.current = ev.clientX;
+      onResize(delta);
     }
-    function onUp() {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      onDone();
+
+    function onMouseUp() {
+      dragging.current = false;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      if (onDone) onDone();
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
   }
 
   return (
-    <div
+    <span
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group/rh select-none z-10"
+      className="absolute right-0 top-0 h-full w-2 cursor-col-resize select-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+      style={{ touchAction: 'none' }}
     >
-      <span className="w-px h-4 bg-gray-700 group-hover/rh:bg-blue-500 transition-colors rounded-full"></span>
-    </div>
+      <span className="w-px h-4 bg-gray-600 rounded" />
+    </span>
   );
 }
 
@@ -366,7 +367,7 @@ const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 
 // ---- ClientTable ----
 export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [search, setSearch]               = useState('');
-  const [sortCols, setSortCols]           = useState(DEFAULT_SORT);
+  const [sortCols, setSortCols]           = useState(function() { return loadSortPrefs() || DEFAULT_SORT; });
   const [activeAps, setActiveAps]         = useState(new Set());
   const [activeVendors, setActiveVendors] = useState(new Set());
   const [activeOuis, setActiveOuis]       = useState(new Set());
@@ -414,6 +415,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   useEffect(function() { saveColumnPrefs(columns); }, [columns]);
 
+  useEffect(function() { saveSortPrefs(sortCols); }, [sortCols]);
+
   // Outside-click-to-close removed: the settings panel is now an inline
   // accordion that pushes content down, so no floating overlay to dismiss.
 
@@ -444,20 +447,23 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   function toggleSort(key, e) {
     setSortCols(function(prev) {
-      const multi = e && e.shiftKey;
+      // Shift held = single-column (replace) mode. Default = multi-column.
+      const single = e && e.shiftKey;
       const existing = prev.find(function(s) { return s.key === key; });
-      if (multi) {
-        if (existing) {
-          if (existing.dir === 'asc') return prev.map(function(s) { return s.key === key ? { key: key, dir: 'desc' } : s; });
-          return prev.filter(function(s) { return s.key !== key; });
+      if (single) {
+        if (existing && prev.length === 1) {
+          if (existing.dir === 'asc') return [{ key: key, dir: 'desc' }];
+          return DEFAULT_SORT;
         }
-        return prev.concat([{ key: key, dir: 'asc' }]);
+        return [{ key: key, dir: 'asc' }];
       }
-      if (existing && prev.length === 1) {
-        if (existing.dir === 'asc') return [{ key: key, dir: 'desc' }];
-        return DEFAULT_SORT;
+      // Multi-column mode (default)
+      if (existing) {
+        if (existing.dir === 'asc') return prev.map(function(s) { return s.key === key ? { key: key, dir: 'desc' } : s; });
+        const next = prev.filter(function(s) { return s.key !== key; });
+        return next.length > 0 ? next : DEFAULT_SORT;
       }
-      return [{ key: key, dir: 'asc' }];
+      return prev.concat([{ key: key, dir: 'asc' }]);
     });
   }
 
@@ -483,28 +489,30 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     setActiveVendors(new Set());
     setActiveOuis(new Set());
     setMeshOnly(false);
+    resetSort();
   }
 
-  const q = search.trim().toLowerCase();
-
+  // ---- Filtering ----
+  const searchLower = search.toLowerCase();
   const filtered = clients.filter(function(c) {
     if (meshOnly && !c.isMeshNode) return false;
-    if (q) {
-      const hit =
-        (c.mac      && c.mac.toLowerCase().includes(q))      ||
-        (c.vendor   && c.vendor.toLowerCase().includes(q))   ||
-        (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-        (c.ip       && c.ip.toLowerCase().includes(q))       ||
-        (c.apName   && c.apName.toLowerCase().includes(q))   ||
-        (c.iface    && c.iface.toLowerCase().includes(q));
-      if (!hit) return false;
+    if (activeAps.size > 0 && !activeAps.has(c.apName)) return false;
+    if (activeVendors.size > 0 && !activeVendors.has(c.vendor)) return false;
+    if (activeOuis.size > 0) {
+      const oui = macOui(c.mac);
+      if (!oui || !activeOuis.has(oui)) return false;
     }
-    if (activeAps.size     > 0 && !activeAps.has(c.apName))       return false;
-    if (activeVendors.size > 0 && !activeVendors.has(c.vendor))   return false;
-    if (activeOuis.size    > 0 && !activeOuis.has(macOui(c.mac))) return false;
-    return true;
+    if (!searchLower) return true;
+    return (
+      (c.mac      && c.mac.toLowerCase().includes(searchLower)) ||
+      (c.hostname && c.hostname.toLowerCase().includes(searchLower)) ||
+      (c.ip       && c.ip.toLowerCase().includes(searchLower)) ||
+      (c.vendor   && c.vendor.toLowerCase().includes(searchLower)) ||
+      (c.apName   && c.apName.toLowerCase().includes(searchLower))
+    );
   });
 
+  // ---- Sorting ----
   const sorted = filtered.slice().sort(function(a, b) {
     for (var i = 0; i < sortCols.length; i++) {
       const sc  = sortCols[i];
@@ -514,223 +522,54 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     return 0;
   });
 
-  const hasFilter = q || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly;
+  // ---- AP list for filter chips ----
+  const allAps = Array.from(new Set(clients.map(function(c) { return c.apName; }).filter(Boolean))).sort();
 
-  const chips = [];
-  if (meshOnly) chips.push({ label: 'Mesh only', remove: function() { setMeshOnly(false); } });
-  activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
-  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
-  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleFacet(setActiveOuis, v);    } }); });
-
-  function renderCell(c, col) {
-    const isMesh       = c.isMeshNode;
-    const isDiscovered = c.connectionType === 'discovered';
-    const style        = isMobile ? {} : { width: getWidth(col) + 'px', minWidth: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px' };
-
-    switch (col.id) {
-      case 'mac':
-        return <td key="mac" style={style} className="px-3 py-3 font-mono text-xs text-blue-300 overflow-hidden text-ellipsis whitespace-nowrap">{c.mac}</td>;
-
-      case 'vendor':
-        return (
-          <td key="vendor" style={style} className="px-3 py-3 text-xs text-left overflow-hidden">
-            <VendorCell
-              client={c}
-              isMeshActive={meshOnly}
-              activeVendors={activeVendors}
-              activeOuis={activeOuis}
-              onMeshClick={function() { setMeshOnly(function(v) { return !v; }); }}
-              onVendorClick={function(v) { toggleFacet(setActiveVendors, v); }}
-              onOuiClick={function(v) { toggleFacet(setActiveOuis, v); }}
-            />
-          </td>
-        );
-
-      case 'hostname':
-        return (
-          <td key="hostname" style={style} className="px-3 py-3 text-gray-300 overflow-hidden text-ellipsis whitespace-nowrap">
-            {c.hostname || <span className="text-gray-600">n/a</span>}
-          </td>
-        );
-
-      case 'ip':
-        return (
-          <td key="ip" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
-            {c.ip || <span className="text-gray-600">n/a</span>}
-          </td>
-        );
-
-      case 'apName': {
-        const apActive = activeAps.has(c.apName);
-        const apDot    = isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400';
-        const apPill   = apActive
-          ? 'bg-blue-900/50 border-blue-600/60 text-blue-300'
-          : 'bg-gray-800/80 border-gray-700 text-gray-300 hover:bg-gray-700/70 hover:border-gray-500';
-        return (
-          <td key="apName" style={style} className="px-3 py-3 text-xs overflow-hidden">
-            {c.apName ? (
-              <button
-                onClick={function(e) { e.stopPropagation(); toggleFacet(setActiveAps, c.apName); }}
-                title={'Filter by AP: ' + c.apName}
-                className={'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border transition-colors ' + apPill}
-              >
-                <span className={'w-1.5 h-1.5 rounded-full flex-shrink-0 ' + apDot}></span>
-                <span className="truncate max-w-[7rem]">{c.apName}</span>
-              </button>
-            ) : (
-              <span className="text-gray-600">n/a</span>
-            )}
-          </td>
-        );
-      }
-
-      case 'iface':
-        return (
-          <td key="iface" style={style} className="px-3 py-3 font-mono text-xs text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap">
-            {c.iface || 'n/a'}
-          </td>
-        );
-
-      case 'rssi':
-        return (
-          <td key="rssi" style={style} className={'px-3 py-3 font-mono text-xs ' + rssiColor(c.rssi)}>
-            {c.rssi != null ? c.rssi : <span className="text-gray-600">n/a</span>}
-          </td>
-        );
-
-      case 'tx_bytes':
-        return (
-          <td key="tx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
-            {fmtBytes(c.tx_bytes) !== null ? fmtBytes(c.tx_bytes) : <span className="text-gray-600">n/a</span>}
-          </td>
-        );
-
-      case 'rx_bytes':
-        return (
-          <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
-            {fmtBytes(c.rx_bytes) !== null ? fmtBytes(c.rx_bytes) : <span className="text-gray-600">n/a</span>}
-          </td>
-        );
-
-      case 'first_seen':
-        return (
-          <td key="first_seen" style={style} className="px-3 py-3 text-xs text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap" title={fmtAbsolute(c.first_seen)}>
-            {fmtRelative(c.first_seen) || <span className="text-gray-600">n/a</span>}
-          </td>
-        );
-
-      case 'actions':
-        return (
-          <td key="actions" style={style} className="px-3 py-3 text-right overflow-hidden">
-            {!c.isMeshNode && !isDiscovered && (
-              <button
-                onClick={function(e) { e.stopPropagation(); onDisconnect(c.mac); }}
-                disabled={!!disconnecting[c.mac]}
-                className={
-                  'text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ' +
-                  (disconnecting[c.mac]
-                    ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-                    : 'bg-red-600/20 text-red-400 border border-red-600/30 hover:bg-red-600/40 hover:text-red-300')
-                }
-              >
-                {disconnecting[c.mac] ? 'Disconnecting...' : 'Disconnect'}
-              </button>
-            )}
-          </td>
-        );
-
-      default:
-        return <td key={col.id} style={style} className="px-3 py-3 text-gray-600">-</td>;
-    }
-  }
-
-  // Desktop: card is 102% wide so the table (100% of card) always has room and
-  //   never causes a phantom horizontal scrollbar from sub-pixel rounding.
-  //   overflowX:auto on the card handles real horizontal scrolling when columns
-  //   exceed the viewport. The scroll div only scrolls vertically (overflow-y-auto),
-  //   which keeps position:sticky on thead working correctly.
-  // Mobile: card is 100% wide with overflowX:auto so the auto-layout table is
-  //   contained inside the card and scrolls horizontally within it.
-  const cardStyle = isMobile
-    ? { width: '100%', minWidth: 0, overflowX: 'auto' }
-    : { width: '102%', minWidth: '400px', overflowX: 'auto' };
-
-  // Desktop: thin themed scrollbar on the vertical scroll div.
-  // Mobile: no style needed.
-  const scrollDivStyle = isMobile
-    ? {}
-    : { scrollbarWidth: 'thin', scrollbarColor: '#374151 transparent' };
+  const hasFilters = search || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly || !isDefaultSort;
 
   return (
-    // Desktop: sm:h-full fills the bounded flex-1 container from App.jsx.
-    // Mobile: no height constraint, content flows and the page scrolls.
-    <div style={cardStyle} className="flex flex-col bg-gray-900 rounded-xl border border-gray-800 sm:h-full">
+    <div className="w-full flex flex-col gap-2 max-w-full">
 
-      {/* Toolbar */}
-      <div className="flex-none px-4 py-3 border-b border-gray-800 flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h2 className="text-sm font-semibold text-gray-300">Connected Clients</h2>
-            {isMobile && (
-              <span className="text-xs text-emerald-400 border border-emerald-700/50 bg-emerald-900/20 rounded px-1.5 py-0.5">Mobile view</span>
-            )}
-            {!isDefaultSort && (
-              <button
-                onClick={resetSort}
-                className="text-xs px-2 py-0.5 rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-colors"
-                title="Reset to default sort"
-              >
-                Reset sort
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
+      {/* ---- Toolbar ---- */}
+      <div className="flex-none flex flex-col gap-2">
+
+        {/* Search + gear */}
+        <div className="flex items-center gap-2">
+          <input
+            type="search"
+            placeholder="Search MAC, hostname, IP, vendor, AP..."
+            value={search}
+            onChange={function(e) { setSearch(e.target.value); }}
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+          />
+          <button
+            onClick={function() { setShowSettings(function(v) { return !v; }); }}
+            title="Column settings"
+            className={
+              'p-1.5 rounded-lg border transition-colors ' +
+              (showSettings
+                ? 'bg-blue-900/40 border-blue-600/60 text-blue-300'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600')
+            }
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {hasFilters && (
             <button
-              onClick={function() { setShowSettings(function(v) { return !v; }); }}
-              title="Configure columns"
-              className={
-                'p-1.5 rounded-lg border transition-colors ' +
-                (showSettings
-                  ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
-                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
-              }
+              onClick={clearAll}
+              title="Clear all filters and sort"
+              className="p-1.5 rounded-lg border border-gray-700 bg-gray-800 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition-colors"
             >
-              <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <rect x="1" y="2" width="4" height="12" rx="0.5"/>
-                <rect x="6" y="2" width="4" height="12" rx="0.5"/>
-                <rect x="11" y="2" width="4" height="12" rx="0.5"/>
+              <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
               </svg>
             </button>
-            <input
-              type="text"
-              placeholder="Search..."
-              value={search}
-              onChange={function(e) { setSearch(e.target.value); }}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-40 sm:w-64"
-            />
-            {hasFilter && (
-              <button
-                onClick={clearAll}
-                title="Clear all filters"
-                className="text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
-              >
-                &times;
-              </button>
-            )}
-          </div>
+          )}
         </div>
-        {chips.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {chips.map(function(chip, i) {
-              return (
-                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/30 border border-blue-700/40 text-blue-300 text-xs rounded-full px-2 py-0.5">
-                  {chip.label}
-                  <button onClick={chip.remove} className="ml-0.5 text-blue-400 hover:text-white transition-colors leading-none">&times;</button>
-                </span>
-              );
-            })}
-          </div>
-        )}
+
+        {/* Column settings panel */}
         {showSettings && (
           <ColumnSettingsPanel
             columns={columns}
@@ -738,58 +577,98 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             onClose={function() { setShowSettings(false); }}
           />
         )}
+
+        {/* AP filter chips */}
+        {allAps.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            {allAps.map(function(ap) {
+              const active = activeAps.has(ap);
+              return (
+                <button
+                  key={ap}
+                  onClick={function() { toggleFacet(setActiveAps, ap); }}
+                  className={
+                    'px-2 py-0.5 rounded-full text-xs font-medium border transition-colors ' +
+                    (active
+                      ? 'bg-blue-800/60 border-blue-500/70 text-blue-200'
+                      : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-blue-600/50 hover:text-blue-300')
+                  }
+                >
+                  {ap}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Active filter summary */}
+        {(activeVendors.size > 0 || activeOuis.size > 0 || meshOnly) && (
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <span className="text-xs text-gray-500">Filtering by:</span>
+            {meshOnly && (
+              <button
+                onClick={function() { setMeshOnly(false); }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-indigo-800/60 border-indigo-500/70 text-indigo-200 hover:bg-indigo-700/60 transition-colors"
+              >
+                Mesh Node <span className="ml-0.5 opacity-70">&times;</span>
+              </button>
+            )}
+            {Array.from(activeVendors).map(function(v) {
+              return (
+                <button
+                  key={v}
+                  onClick={function() { toggleFacet(setActiveVendors, v); }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-blue-800/60 border-blue-500/70 text-blue-200 hover:bg-blue-700/60 transition-colors"
+                >
+                  {v} <span className="ml-0.5 opacity-70">&times;</span>
+                </button>
+              );
+            })}
+            {Array.from(activeOuis).map(function(oui) {
+              return (
+                <button
+                  key={oui}
+                  onClick={function() { toggleFacet(setActiveOuis, oui); }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-blue-800/60 border-blue-500/70 text-blue-200 hover:bg-blue-700/60 transition-colors font-mono"
+                >
+                  {oui} <span className="ml-0.5 opacity-70 font-sans">&times;</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {/* Desktop: vertical scroll only -- horizontal overflow is handled by overflowX:auto
-          on the card. Using overflow-y-auto here (not overflow-auto) keeps position:sticky
-          on thead working and avoids phantom horizontal scrollbars.
-          Mobile: no overflow -- the page scrolls. */}
-      <div className={isMobile ? 'w-full' : 'flex-1 overflow-y-auto'} style={scrollDivStyle}>
+      {/* ---- Table ---- */}
+      {/* Desktop: overflow-x-auto + fixed column widths.
+          Mobile: full-width auto layout, no horizontal scroll. */}
+      <div className="flex-1 sm:overflow-auto rounded-lg border border-gray-800">
         <table
           className="text-sm border-collapse"
-          style={isMobile
-            ? { tableLayout: 'auto', width: '100%' }
-            : { tableLayout: 'fixed', width: '100%' }
-          }
+          style={{ width: tableWidth, minWidth: isMobile ? '100%' : undefined }}
         >
-          {!isMobile && (
-            <colgroup>
+          <thead className="sticky top-0 z-10 bg-gray-900">
+            <tr>
               {visibleCols.map(function(col) {
-                return <col key={col.id} style={{ width: getWidth(col) + 'px' }} />;
-              })}
-            </colgroup>
-          )}
-          <thead>
-            <tr
-              className="text-gray-500 text-xs uppercase tracking-wider border-b border-gray-800 bg-gray-900"
-              style={{ position: 'sticky', top: 0, zIndex: 20 }}
-            >
-              {visibleCols.map(function(col) {
-                const sortable  = SORTABLE.has(col.id);
+                const sortable = SORTABLE.has(col.id);
                 const isActive  = sortable && sortCols.some(function(s) { return s.key === col.id; });
-                const isActions = col.id === 'actions';
-                const thStyle   = isMobile
-                  ? { position: 'relative' }
-                  : (function() {
-                      const w = getWidth(col);
-                      return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px', position: 'relative' };
-                    })();
                 return (
                   <th
                     key={col.id}
-                    style={thStyle}
-                    onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
+                    style={isMobile ? undefined : { width: getWidth(col) + 'px', minWidth: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px' }}
                     className={
-                      'px-3 py-2 select-none transition-colors whitespace-nowrap overflow-hidden ' +
-                      (isActions ? 'text-right ' : 'text-left ') +
+                      'relative group text-left px-3 py-2 text-xs font-semibold uppercase tracking-wider border-b border-gray-800 select-none whitespace-nowrap ' +
                       (sortable ? 'cursor-pointer ' : '') +
+                      (isActive ? 'text-blue-400 bg-blue-950/30 ' : 'text-gray-400 ') +
                       (isActive ? 'text-gray-300' : sortable ? 'hover:text-gray-300' : '')
                     }
-                    title={sortable ? 'Click to sort. Shift+click for multi-sort.' : undefined}
+                    onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
+                    title={sortable ? 'Click to sort (multi-column). Shift+click to sort by this column only.' : undefined}
                   >
                     <span className="truncate">{col.label}{sortable ? sortMark(col.id) : null}</span>
                     {!isMobile && (
                       <ResizeHandle
+                        colId={col.id}
                         onResize={function(delta) { handleResize(col.id, delta); }}
                         onDone={handleResizeDone}
                       />
@@ -802,25 +681,115 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
           <tbody>
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={visibleCols.length} className="px-4 py-10 text-center text-gray-600">
-                  {clients.length === 0 ? 'No clients connected.' : 'No results for your search.'}
+                <td colSpan={visibleCols.length} className="px-3 py-8 text-center text-gray-500 text-sm">
+                  {clients.length === 0 ? 'No clients connected.' : 'No clients match the current filters.'}
                 </td>
               </tr>
             )}
-            {sorted.map(function(c) {
-              const isMeshRow = c.isMeshNode;
-              const isDisc    = c.connectionType === 'discovered';
+            {sorted.map(function(client) {
               return (
                 <tr
-                  key={c.mac}
-                  className={
-                    'border-b border-gray-800 last:border-0 transition-colors ' +
-                    (isMeshRow ? 'bg-indigo-950/20 hover:bg-indigo-950/30' :
-                     isDisc    ? 'bg-amber-950/10 hover:bg-amber-950/20'   :
-                                 'hover:bg-gray-800/50')
-                  }
+                  key={client.mac}
+                  className="border-b border-gray-800/60 hover:bg-gray-800/40 transition-colors"
                 >
-                  {visibleCols.map(function(col) { return renderCell(c, col); })}
+                  {visibleCols.map(function(col) {
+                    if (col.id === 'mac') {
+                      return (
+                        <td key="mac" className="px-3 py-2 font-mono text-xs text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {client.mac}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'vendor') {
+                      return (
+                        <td key="vendor" className="px-3 py-2 whitespace-nowrap overflow-hidden text-ellipsis" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          <VendorCell
+                            client={client}
+                            isMeshActive={meshOnly}
+                            activeVendors={activeVendors}
+                            activeOuis={activeOuis}
+                            onMeshClick={function() { setMeshOnly(function(v) { return !v; }); }}
+                            onVendorClick={function(v) { toggleFacet(setActiveVendors, v); }}
+                            onOuiClick={function(oui) { toggleFacet(setActiveOuis, oui); }}
+                          />
+                        </td>
+                      );
+                    }
+                    if (col.id === 'hostname') {
+                      return (
+                        <td key="hostname" className="px-3 py-2 text-gray-200 whitespace-nowrap overflow-hidden text-ellipsis" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {client.hostname || <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'ip') {
+                      return (
+                        <td key="ip" className="px-3 py-2 font-mono text-xs text-gray-300 whitespace-nowrap" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {client.ip || <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'apName') {
+                      return (
+                        <td key="apName" className="px-3 py-2 text-gray-400 text-xs whitespace-nowrap overflow-hidden text-ellipsis" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {client.apName || <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'iface') {
+                      return (
+                        <td key="iface" className="px-3 py-2 text-gray-400 text-xs whitespace-nowrap" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {client.iface || <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'rssi') {
+                      return (
+                        <td key="rssi" className={'px-3 py-2 font-mono text-xs whitespace-nowrap ' + rssiColor(client.rssi)} style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {client.rssi != null ? client.rssi + ' dBm' : <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'tx_bytes') {
+                      const fmt = fmtBytes(client.tx_bytes);
+                      return (
+                        <td key="tx_bytes" className="px-3 py-2 font-mono text-xs text-gray-400 whitespace-nowrap" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {fmt != null ? fmt : <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'rx_bytes') {
+                      const fmt = fmtBytes(client.rx_bytes);
+                      return (
+                        <td key="rx_bytes" className="px-3 py-2 font-mono text-xs text-gray-400 whitespace-nowrap" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {fmt != null ? fmt : <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'first_seen') {
+                      const rel = fmtRelative(client.first_seen);
+                      const abs = fmtAbsolute(client.first_seen);
+                      return (
+                        <td key="first_seen" className="px-3 py-2 text-xs text-gray-400 whitespace-nowrap" title={abs} style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          {rel || <span className="text-gray-600">n/a</span>}
+                        </td>
+                      );
+                    }
+                    if (col.id === 'actions') {
+                      return (
+                        <td key="actions" className="px-3 py-2 whitespace-nowrap" style={isMobile ? undefined : { maxWidth: getWidth(col) + 'px' }}>
+                          <button
+                            onClick={function() { onDisconnect(client.mac); }}
+                            disabled={!!disconnecting[client.mac]}
+                            className="px-2 py-1 text-xs rounded border border-red-800/60 text-red-400 hover:bg-red-900/30 hover:border-red-600/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {disconnecting[client.mac] ? 'Disconnecting...' : 'Disconnect'}
+                          </button>
+                        </td>
+                      );
+                    }
+                    return null;
+                  })}
                 </tr>
               );
             })}
@@ -828,9 +797,14 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
         </table>
       </div>
 
-      {/* Footer */}
-      <div className="flex-none px-4 py-2 border-t border-gray-800 text-xs text-gray-600">
-        Showing {sorted.length} of {clients.length} client{clients.length !== 1 ? 's' : ''}
+      {/* ---- Footer ---- */}
+      <div className="flex-none text-xs text-gray-600 pb-1">
+        {filtered.length !== clients.length
+          ? filtered.length + ' of ' + clients.length + ' clients'
+          : clients.length + ' client' + (clients.length !== 1 ? 's' : '')}
+        {!isDefaultSort && (
+          <button onClick={resetSort} className="ml-3 text-blue-600 hover:text-blue-400 transition-colors">Reset sort</button>
+        )}
       </div>
     </div>
   );
