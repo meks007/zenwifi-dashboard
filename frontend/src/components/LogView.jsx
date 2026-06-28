@@ -113,7 +113,6 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
     if (el) {
       ownScrollRef.current = true;
       el.scrollTop = 0;
-      // Update edge state after the jump.
       setAtTop(true);
       setAtBottom(el.scrollHeight <= el.clientHeight + EDGE_THRESHOLD);
     }
@@ -143,8 +142,8 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
   }
 
   // Scroll nav button style helpers.
-  var navBase = 'text-xs px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ';
-  var navFollow  = navBase + 'bg-blue-700/40 text-blue-300 hover:bg-blue-600/60';
+  var navBase    = 'text-xs px-2.5 py-1 rounded-md font-medium transition-colors whitespace-nowrap ';
+  var navBlue    = navBase + 'bg-blue-700/40 text-blue-300 hover:bg-blue-600/60';
   var navNeutral = navBase + 'bg-gray-800 text-gray-400 hover:text-gray-200';
 
   return (
@@ -213,27 +212,17 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
           )}
         </div>
 
-        {/* Scroll nav: top / bottom / following */}
+        {/* Scroll nav: top / bottom */}
         <div className="flex gap-1 items-center">
-          {/* Top button: show when not at top */}
           {!atTop && (
-            <button onClick={scrollToTop} className={navNeutral} title="Scroll to top">
+            <button onClick={scrollToTop} className={navBlue} title="Scroll to top">
               &uarr; Top
             </button>
           )}
-          {/* Bottom / Following / Resume */}
           {autoScroll ? (
             <span className="text-xs text-gray-500 select-none whitespace-nowrap">Following</span>
-          ) : atBottom ? (
-            <span className="text-xs text-gray-500 select-none whitespace-nowrap">At bottom</span>
           ) : (
-            <button onClick={scrollToBottom} className={navFollow} title="Resume auto-scroll">
-              Resume &darr;
-            </button>
-          )}
-          {/* Explicit bottom jump when not following and not at bottom */}
-          {!autoScroll && !atBottom && (
-            <button onClick={scrollToBottom} className={navNeutral} title="Jump to bottom">
+            <button onClick={scrollToBottom} className={navBlue} title="Jump to bottom">
               &darr; Bottom
             </button>
           )}
@@ -319,30 +308,9 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
                   return <span key={pi}>{part.value}</span>;
                 })}
               </span>
-              {entry.meta && (
-                <span className="text-gray-600 ml-auto shrink-0 pl-2">{JSON.stringify(entry.meta)}</span>
-              )}
             </div>
           );
         })}
-      </div>
-
-      {/* Footer */}
-      <div className="px-4 py-2 border-t border-gray-800 text-xs text-gray-600 flex items-center gap-3">
-        <span>{filtered.length} of {logs.length} entries</span>
-        {search && <span className="text-blue-500/70">filtered by &ldquo;{search}&rdquo;</span>}
-        <div className="ml-auto flex gap-2">
-          {!atTop && (
-            <button onClick={scrollToTop} className="text-gray-500 hover:text-gray-300 transition-colors">
-              &uarr; Top
-            </button>
-          )}
-          {!atBottom && !autoScroll && (
-            <button onClick={scrollToBottom} className="text-blue-400 hover:text-blue-200 transition-colors">
-              &darr; Bottom
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );
