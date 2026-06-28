@@ -66,7 +66,6 @@ function broadcastState() {
     timestamp:    new Date().toISOString(),
   });
 }
-
 function isIpv6(ip) {
   return typeof ip === 'string' && ip.indexOf(':') !== -1;
 }
@@ -132,8 +131,7 @@ async function poll() {
   let meshMap         = new Map();
   let nodeGroups      = new Map();
   let neighMap        = {};
-
-  if (masterAp) {
+if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
@@ -145,8 +143,7 @@ async function poll() {
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
-
-  await Promise.allSettled(aps.map(async function(ap) {
+await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(
         ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval
@@ -186,8 +183,7 @@ async function poll() {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
   const collapsed = collapseMeshNodes(enriched);
-
-  const dhcpEnriched = collapsed.map(function(c) {
+const dhcpEnriched = collapsed.map(function(c) {
     var dhcp  = c.isMeshNode ? null : opnsense.getDhcpInfo(c.mac);
     var rawIp = (!c.isMeshNode && dhcp && dhcp.ip) ? dhcp.ip : (c.ip || null);
     return Object.assign({}, c, {
@@ -234,8 +230,7 @@ async function poll() {
     if (discoveredRows.length > 0) {
       logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     }
-
-    pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
+pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
     allClients = dhcpEnriched.concat(discoveredRows);
   }
@@ -244,10 +239,14 @@ async function poll() {
   const freshClients = new Map();
   allClients.forEach(function(c) { freshClients.set(c.mac, c); });
 
-  // Timestamp persistence: new MAC => write; gone MAC => delete; all => attach.
+  // Timestamp persistence: new MAC => write only if not already in DB;
+  // gone MAC => delete; all => attach from DB.
+  // Checking db.getFirstSeen prevents overwriting timestamps that were
+  // persisted in a previous run (fixes reset-on-restart when prevClients
+  // is empty at startup).
   try {
     freshClients.forEach(function(c, mac) {
-      if (!prevClients.has(mac)) {
+      if (!prevClients.has(mac) && !db.getFirstSeen(mac)) {
         db.setFirstSeen(mac, now);
         logger.debug('[DB] first_seen set for ' + mac);
       }
@@ -341,15 +340,14 @@ wss.on('connection', function(ws) {
   }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
-
 const pollInterval = (config.polling_interval_seconds || 30) * 1000;
 logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
 logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
 
-const _preloaded = db.loadAll();
-logger.info('[DB] Loaded ' + _preloaded.size + ' persisted first_seen record(s)');
+const preloaded = db.loadAll();
+logger.info('[DB] Loaded ' + preloaded.size + ' persisted first_seen record(s)');
 
 mqttModule.connect(config, handleDisconnect);
 opnsense.startPolling(config.opnsense);
