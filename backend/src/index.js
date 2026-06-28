@@ -36,7 +36,14 @@ const pkg          = require('../package.json');
 const config      = configModule.loadConfig();
 const haDiscovery = configModule.getHaDiscoveryConfig(config);
 logger.setDebug(!!config.debug_logging);
-logger.setMaxLines(config.log_buffer_size || 500);
+
+// File-backed logging: must be initialised before any logger.info/warn/error
+// calls so that startup messages land in the log file.
+var logFileCfg = configModule.getLogFileConfig(config);
+if (logFileCfg) {
+  logger.initFileLog(logFileCfg.path, logFileCfg.maxBytes, logFileCfg.maxRotations);
+  logger.info('[Logger] File logging enabled: ' + logFileCfg.path);
+}
 
 const aps                    = config.access_points || [];
 const masterAp               = aps.find(function(ap) { return ap.master === true; }) || null;
@@ -76,7 +83,6 @@ function broadcastState() {
     timestamp:     new Date().toISOString(),
   });
 }
-
 // ---------------------------------------------------------------------------
 // Poll loop
 // ---------------------------------------------------------------------------
@@ -131,7 +137,6 @@ async function poll() {
   });
   var allClients = dhcpEnriched;
   var ndCfg      = config.opnsense && config.opnsense.neighbor_discovery;
-
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
     var wifiMacs = [];
     dhcpEnriched.forEach(function(c) {
@@ -168,7 +173,6 @@ async function poll() {
   const now          = new Date().toISOString();
   const freshClients = new Map();
   allClients.forEach(function(c) { freshClients.set(c.mac, c); });
-
   try {
     freshClients.forEach(function(c, mac) {
       var prev        = prevClients.get(mac);
@@ -197,7 +201,6 @@ async function poll() {
     prevClients.forEach(function(_c, mac) {
       if (!freshClients.has(mac)) { db.deleteFirstSeen(mac); logger.debug('[DB] first_seen cleared for ' + mac); }
     });
-
     freshClients.forEach(function(c, mac) {
       c.first_seen = db.getFirstSeen(mac) || null;
       if (c.connectionType === 'discovered') {
@@ -242,7 +245,6 @@ async function poll() {
 
   broadcastState();
 }
-
 // ---------------------------------------------------------------------------
 // Disconnect handler
 // ---------------------------------------------------------------------------
@@ -266,7 +268,6 @@ async function handleDisconnect(mac) {
     return { success: false, error: err.message };
   }
 }
-
 // ---------------------------------------------------------------------------
 // Ping handler (on-demand single-client ping)
 // ---------------------------------------------------------------------------
@@ -303,8 +304,8 @@ registerRoutes(app, {
   handleDisconnect:  handleDisconnect,
   handlePing:        handlePing,
   getDbHealthy:      function() { return dbHealthy; },
+  logger:            logger,
 });
-
 wss.on('connection', function(ws) {
   logger.debug('[WS] Client connected');
   var visibleOnConnect = Array.from(currentClients.values()).filter(function(c) {
@@ -321,7 +322,19 @@ wss.on('connection', function(ws) {
     repoUrl:       pkg.repository.url,
     timestamp:     new Date().toISOString(),
   }));
-  ws.send(JSON.stringify({ type: 'log_history', entries: logger.list() }));
+  // Send the last 100 log lines on connect so the frontend has immediate history.
+  ws.send(JSON.stringify({ type: 'log_history', entries: logger.tail(logFileCfg ? logFileCfg.tailLines : 100) }));
+  ws.on('message', function(raw) {
+    try {
+      var msg = JSON.parse(raw);
+      // Client can request more history: { type: 'request_log_history', all: true }
+      // or a specific count:             { type: 'request_log_history', n: 500 }
+      if (msg.type === 'request_log_history') {
+        var n = (msg.all === true) ? 0 : (msg.n || 100);
+        ws.send(JSON.stringify({ type: 'log_history', entries: logger.tail(n) }));
+      }
+    } catch (_) {}
+  });
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
 });
 
@@ -337,7 +350,6 @@ logger.info('[Server] HA MQTT Discovery: ' + (haDiscovery ? 'enabled (prefix: ' 
 
 const preloaded = db.loadAll();
 logger.info('[DB] Loaded ' + preloaded.size + ' persisted first_seen record(s)');
-
 mqttModule.connect(config, handleDisconnect);
 opnsense.startPolling(config.opnsense);
 pinger.start(pingIntervalMinutes, function(mac, online) {
