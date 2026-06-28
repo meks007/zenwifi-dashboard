@@ -5,19 +5,19 @@ import LogView from './components/LogView.jsx';
 
 const WS_URL = 'ws://' + window.location.host + '/ws';
 const RECONNECT_DELAY_MS = 3000;
-
 const MAX_LOG_ENTRIES = 50000;
 
 export default function App() {
-  const [clients, setClients] = useState([]);
-  const [apStatus, setApStatus] = useState({});
+  const [clients, setClients]           = useState([]);
+  const [apStatus, setApStatus]         = useState({});
   const [mqttConnected, setMqttConnected] = useState(false);
-  const [wsConnected, setWsConnected] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState(null);
+  const [wsConnected, setWsConnected]   = useState(false);
+  const [dbHealthy, setDbHealthy]       = useState(true);
+  const [lastUpdated, setLastUpdated]   = useState(null);
   const [disconnecting, setDisconnecting] = useState({});
-  const [toast, setToast] = useState(null);
-  const [logs, setLogs] = useState([]);
-  const [activeTab, setActiveTab] = useState('clients');
+  const [toast, setToast]               = useState(null);
+  const [logs, setLogs]                 = useState([]);
+  const [activeTab, setActiveTab]       = useState('clients');
   const wsRef = useRef(null);
 
   const showToast = useCallback(function(msg, type) {
@@ -46,7 +46,12 @@ export default function App() {
           setClients(data.clients || []);
           setApStatus(data.apStatus || {});
           setMqttConnected(!!data.mqttConnected);
+          if (typeof data.dbHealthy === 'boolean') setDbHealthy(data.dbHealthy);
           setLastUpdated(data.timestamp);
+        }
+
+        if (data.type === 'db_status') {
+          setDbHealthy(!!data.healthy);
         }
 
         if (data.type === 'log') {
@@ -95,7 +100,7 @@ export default function App() {
 
   const tabs = [
     { id: 'clients', label: 'Clients (' + clients.length + ')' },
-    { id: 'logs', label: 'Logs' + (errorCount > 0 ? ' (' + errorCount + ' errors)' : '') },
+    { id: 'logs',    label: 'Logs' + (errorCount > 0 ? ' (' + errorCount + ' errors)' : '') },
   ];
 
   return (
@@ -110,10 +115,11 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-5">
+      <main className="px-4 py-6 space-y-5">
         <StatusBar
           wsConnected={wsConnected}
           mqttConnected={mqttConnected}
+          dbHealthy={dbHealthy}
           apStatus={apStatus}
           clientCount={clients.length}
         />
