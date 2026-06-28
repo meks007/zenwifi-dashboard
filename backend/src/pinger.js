@@ -73,8 +73,10 @@ function pingOne(ip) {
 }
 
 /**
- * Apply a ping result for a single client entry: update statusMap, persist to
- * DB, and fire onStateChange if the online/offline state flipped.
+ * Apply a ping result for a single client entry: update statusMap and fire
+ * onStateChange if the online/offline state flipped.
+ * DB persistence is intentionally NOT done here -- callers are responsible
+ * for persisting after all pings for a client are complete.
  * Returns { online, sent, received, flipped }.
  */
 function applyPingResult(entry, result) {
@@ -92,12 +94,6 @@ function applyPingResult(entry, result) {
     last_ping_result: resultStr,
   });
 
-  try {
-    db.setLastPing(entry.mac, now.toISOString(), resultStr);
-  } catch (dbErr) {
-    logger.error('[Pinger] Failed to persist last_ping for ' + entry.mac + ': ' + dbErr.message);
-  }
-
   if (flipped) {
     logger.info('[Pinger] ' + entry.mac + ' (' + entry.ip + ') is now ' + (online ? 'ONLINE' : 'OFFLINE'));
     if (_onStateChange) _onStateChange(entry.mac, online);
@@ -107,7 +103,21 @@ function applyPingResult(entry, result) {
 }
 
 /**
+ * Persist the current statusMap entry for a MAC to the DB.
+ */
+function persistPingState(mac) {
+  var s = statusMap.get(mac);
+  if (!s) return;
+  try {
+    db.setLastPing(mac, s.last_ping_at, s.last_ping_result);
+  } catch (dbErr) {
+    logger.error('[Pinger] Failed to persist last_ping for ' + mac + ': ' + dbErr.message);
+  }
+}
+
+/**
  * Ping all currently known discovered clients sequentially.
+ * DB state is written once per client after its ping completes.
  */
 async function runPingCycle() {
   if (_cycleRunning) {
@@ -133,6 +143,7 @@ async function runPingCycle() {
       (result.online ? 'ONLINE' : 'OFFLINE')
     );
     applyPingResult(entry, result);
+    persistPingState(entry.mac);
   }
 
   _cycleRunning = false;
@@ -189,6 +200,7 @@ function triggerCycle() {
 /**
  * Immediately ping a single known client, bypassing the interval guard.
  * Runs the full online/offline flip logic and fires onStateChange if needed.
+ * Persists the result to DB after the ping completes.
  * Resolves to { online, sent, received, flipped }.
  * Rejects if the MAC is not in the known client list or has no IP.
  */
@@ -204,7 +216,9 @@ async function pingClient(mac) {
     result.received + '/' + result.sent + ' -> ' +
     (result.online ? 'ONLINE' : 'OFFLINE')
   );
-  return applyPingResult(entry, result);
+  var applied = applyPingResult(entry, result);
+  persistPingState(mac);
+  return applied;
 }
 
 function getStatus(mac) {
