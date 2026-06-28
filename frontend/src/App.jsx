@@ -8,16 +8,16 @@ const RECONNECT_DELAY_MS = 3000;
 const MAX_LOG_ENTRIES = 50000;
 
 export default function App() {
-  const [clients, setClients]           = useState([]);
-  const [apStatus, setApStatus]         = useState({});
+  const [clients, setClients]             = useState([]);
+  const [apStatus, setApStatus]           = useState({});
   const [mqttConnected, setMqttConnected] = useState(false);
-  const [wsConnected, setWsConnected]   = useState(false);
-  const [dbHealthy, setDbHealthy]       = useState(true);
-  const [lastUpdated, setLastUpdated]   = useState(null);
+  const [wsConnected, setWsConnected]     = useState(false);
+  const [dbHealthy, setDbHealthy]         = useState(true);
+  const [lastUpdated, setLastUpdated]     = useState(null);
   const [disconnecting, setDisconnecting] = useState({});
-  const [toast, setToast]               = useState(null);
-  const [logs, setLogs]                 = useState([]);
-  const [activeTab, setActiveTab]       = useState('clients');
+  const [toast, setToast]                 = useState(null);
+  const [logs, setLogs]                   = useState([]);
+  const [activeTab, setActiveTab]         = useState('clients');
   const wsRef = useRef(null);
 
   const showToast = useCallback(function(msg, type) {
@@ -104,10 +104,12 @@ export default function App() {
   ];
 
   return (
-    // h-screen + overflow-hidden locks the page to the viewport.
-    // Scrolling happens inside each tab content area, not on the body.
-    <div className="h-screen flex flex-col overflow-hidden bg-gray-950 text-gray-100 font-sans">
-      <header className="flex-none bg-gray-900 border-b border-gray-800 px-4 py-4 flex items-center justify-between">
+    // w-fit shrinks the shell to match the table content width so no extra
+    // blank space appears to the right of the table on wide screens.
+    // min-w-full ensures the shell still covers the full viewport on narrow
+    // screens where the table is smaller than the screen width.
+    <div className="min-h-screen w-fit min-w-full bg-gray-950 text-gray-100 font-sans">
+      <header className="bg-gray-900 border-b border-gray-800 px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center text-white font-bold text-sm">ZW</div>
           <h1 className="text-lg font-semibold tracking-tight">Zenwifi Dashboard</h1>
@@ -117,18 +119,16 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col overflow-hidden px-4 pt-6">
-        <div className="flex-none">
-          <StatusBar
-            wsConnected={wsConnected}
-            mqttConnected={mqttConnected}
-            dbHealthy={dbHealthy}
-            apStatus={apStatus}
-            clientCount={clients.length}
-          />
-        </div>
+      <main className="px-4 py-6 space-y-5">
+        <StatusBar
+          wsConnected={wsConnected}
+          mqttConnected={mqttConnected}
+          dbHealthy={dbHealthy}
+          apStatus={apStatus}
+          clientCount={clients.length}
+        />
 
-        <div className="flex-none flex gap-1 border-b border-gray-800 mt-5">
+        <div className="flex gap-1 border-b border-gray-800">
           {tabs.map(function(tab) {
             return (
               <button
@@ -147,20 +147,17 @@ export default function App() {
           })}
         </div>
 
-        {/* Tab content fills remaining height and clips. Each tab handles its own scroll. */}
-        <div className="flex-1 overflow-hidden py-5">
-          {activeTab === 'clients' && (
-            <ClientTable
-              clients={clients}
-              disconnecting={disconnecting}
-              onDisconnect={handleDisconnect}
-            />
-          )}
+        {activeTab === 'clients' && (
+          <ClientTable
+            clients={clients}
+            disconnecting={disconnecting}
+            onDisconnect={handleDisconnect}
+          />
+        )}
 
-          {activeTab === 'logs' && (
-            <LogView logs={logs} />
-          )}
-        </div>
+        {activeTab === 'logs' && (
+          <LogView logs={logs} />
+        )}
       </main>
 
       {toast && (
