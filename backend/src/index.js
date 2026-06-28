@@ -4,19 +4,12 @@ const express      = require('express');
 const http         = require('http');
 const WebSocket    = require('ws');
 const cors         = require('cors');
-const configModule = require('./config');
-const sshModule    = require('./ssh');
-const mqttModule   = require('./mqtt');
 const logger       = require('./logger');
-const ouiModule    = require('./oui');
-const opnsense     = require('./opnsense');
-const pinger       = require('./pinger');
-const db           = require('./db');
-const housekeeping = require('./housekeeping');
-const { registerRoutes }                              = require('./routes');
-const { filterIp, collapseMeshNodes, resolveIfaceLabel } = require('./client-pipeline');
-const pkg          = require('../package.json');
 
+// Wire up the WebSocket broadcaster before any other module is loaded so that
+// every log entry -- including those emitted during require() and loadConfig()
+// -- is queued and flushed to connected clients the moment the WS server is
+// ready. The queue in logger.js holds entries until setBroadcaster() is called.
 const app    = express();
 app.use(cors());
 app.use(express.json());
@@ -26,8 +19,22 @@ const wss    = new WebSocket.Server({ server: server });
 
 logger.setBroadcaster(function(payload) { broadcast(payload); });
 
-const config               = configModule.loadConfig();
-const haDiscovery          = configModule.getHaDiscoveryConfig(config);
+// All other requires happen after the broadcaster is wired up so their
+// module-level log calls (e.g. oui.js warn on missing oui-data) are captured.
+const configModule = require('./config');
+const sshModule    = require('./ssh');
+const mqttModule   = require('./mqtt');
+const ouiModule    = require('./oui');
+const opnsense     = require('./opnsense');
+const pinger       = require('./pinger');
+const db           = require('./db');
+const housekeeping = require('./housekeeping');
+const { registerRoutes }                                 = require('./routes');
+const { filterIp, collapseMeshNodes, resolveIfaceLabel } = require('./client-pipeline');
+const pkg          = require('../package.json');
+
+const config      = configModule.loadConfig();
+const haDiscovery = configModule.getHaDiscoveryConfig(config);
 logger.setDebug(!!config.debug_logging);
 logger.setMaxLines(config.log_buffer_size || 500);
 
@@ -44,6 +51,7 @@ let apStatus       = {};
 var dbHealthy      = true;
 const apFailCount = {};
 aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
+
 // ---------------------------------------------------------------------------
 // WebSocket broadcast
 // ---------------------------------------------------------------------------
@@ -58,14 +66,14 @@ function broadcastState() {
     return pinger.isOnline(c.mac) !== false;
   });
   broadcast({
-    type:         'clients',
-    clients:      visible,
-    apStatus:     apStatus,
+    type:          'clients',
+    clients:       visible,
+    apStatus:      apStatus,
     mqttConnected: mqttModule.isConnected(),
-    dbHealthy:    dbHealthy,
-    version:      pkg.version,
-    repoUrl:      pkg.repository.url,
-    timestamp:    new Date().toISOString(),
+    dbHealthy:     dbHealthy,
+    version:       pkg.version,
+    repoUrl:       pkg.repository.url,
+    timestamp:     new Date().toISOString(),
   });
 }
 
@@ -78,7 +86,7 @@ async function poll() {
   let meshMap         = new Map();
   let nodeGroups      = new Map();
   let neighMap        = {};
-if (masterAp) {
+  if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     var meshResult = await sshModule.fetchMeshNodeMacs(masterAp);
@@ -88,7 +96,7 @@ if (masterAp) {
   } else {
     logger.warn('[Poll] No master AP configured (master: true). IP resolution will use ARP only.');
   }
-await Promise.allSettled(aps.map(async function(ap) {
+  await Promise.allSettled(aps.map(async function(ap) {
     try {
       const clients = await sshModule.fetchClientsFromAP(ap, clientlistMap, meshMap, neighMap, nodeGroups, ifaceDiscoveryInterval);
       apFailCount[ap.name] = 0;
@@ -106,8 +114,8 @@ await Promise.allSettled(aps.map(async function(ap) {
         logger.warn('[Poll] AP ' + ap.name + ' reached failure threshold (' + FAILURE_THRESHOLD + '), clearing its clients.');
       }
     }
-}));
-const enriched = allRawClients.map(function(c) {
+  }));
+  const enriched = allRawClients.map(function(c) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
   const collapsed    = collapseMeshNodes(enriched, ouiModule.lookup);
@@ -121,7 +129,7 @@ const enriched = allRawClients.map(function(c) {
       hostname:       (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
     });
   });
-var allClients = dhcpEnriched;
+  var allClients = dhcpEnriched;
   var ndCfg      = config.opnsense && config.opnsense.neighbor_discovery;
 
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
@@ -151,7 +159,7 @@ var allClients = dhcpEnriched;
         lastSeen:       c.lastSeen,
       };
     });
-if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
+    if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.length + ' discovered client(s) from neighbor discovery');
     pinger.setClients(discoveredRows.map(function(c) { return { mac: c.mac, ip: c.ip }; }));
     pinger.triggerCycle();
     allClients = dhcpEnriched.concat(discoveredRows);
@@ -165,7 +173,7 @@ if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.l
     freshClients.forEach(function(c, mac) {
       var prev        = prevClients.get(mac);
       var typeChanged = prev && prev.connectionType !== c.connectionType;
-if (typeChanged) {
+      if (typeChanged) {
         // Connection type changed (e.g. wifi -> discovered): treat as a new session.
         db.setFirstSeen(mac, now);
         logger.debug('[DB] first_seen reset for ' + mac + ': connection type changed (' + prev.connectionType + ' -> ' + c.connectionType + ')');
@@ -186,7 +194,7 @@ if (typeChanged) {
         logger.debug('[DB] first_seen set for ' + mac + ': new client');
       }
     });
-prevClients.forEach(function(_c, mac) {
+    prevClients.forEach(function(_c, mac) {
       if (!freshClients.has(mac)) { db.deleteFirstSeen(mac); logger.debug('[DB] first_seen cleared for ' + mac); }
     });
 
@@ -204,7 +212,7 @@ prevClients.forEach(function(_c, mac) {
         }
       }
     });
-if (!dbHealthy) { dbHealthy = true; logger.info('[DB] Database recovered.'); broadcast({ type: 'db_status', healthy: true }); }
+    if (!dbHealthy) { dbHealthy = true; logger.info('[DB] Database recovered.'); broadcast({ type: 'db_status', healthy: true }); }
   } catch (dbErr) {
     logger.error('[DB] Error during timestamp update: ' + dbErr.message);
     if (dbHealthy) { dbHealthy = false; broadcast({ type: 'db_status', healthy: false }); }
@@ -234,6 +242,7 @@ if (!dbHealthy) { dbHealthy = true; logger.info('[DB] Database recovered.'); bro
 
   broadcastState();
 }
+
 // ---------------------------------------------------------------------------
 // Disconnect handler
 // ---------------------------------------------------------------------------
@@ -257,12 +266,13 @@ async function handleDisconnect(mac) {
     return { success: false, error: err.message };
   }
 }
+
 // ---------------------------------------------------------------------------
 // Ping handler (on-demand single-client ping)
 // ---------------------------------------------------------------------------
 async function handlePing(mac) {
   const c = currentClients.get(mac);
-  if (!c)                              return { success: false, error: 'Client not found' };
+  if (!c)                                return { success: false, error: 'Client not found' };
   if (c.connectionType !== 'discovered') return { success: false, error: 'Ping is only supported for discovered clients' };
   try {
     var result = await pinger.pingClient(mac);
@@ -272,7 +282,7 @@ async function handlePing(mac) {
         db.setFirstSeen(mac, now);
         var c2 = currentClients.get(mac);
         if (c2) c2.first_seen = now;
-logger.debug('[DB] first_seen reset for ' + mac + ' on manual ping (came online)');
+        logger.debug('[DB] first_seen reset for ' + mac + ' on manual ping (came online)');
       } catch (dbErr) {
         logger.error('[DB] Failed to reset first_seen for ' + mac + ' on manual ping: ' + dbErr.message);
       }
@@ -284,6 +294,7 @@ logger.debug('[DB] first_seen reset for ' + mac + ' on manual ping (came online)
     return { success: false, error: err.message };
   }
 }
+
 // ---------------------------------------------------------------------------
 // HTTP routes + WebSocket
 // ---------------------------------------------------------------------------
@@ -293,6 +304,7 @@ registerRoutes(app, {
   handlePing:        handlePing,
   getDbHealthy:      function() { return dbHealthy; },
 });
+
 wss.on('connection', function(ws) {
   logger.debug('[WS] Client connected');
   var visibleOnConnect = Array.from(currentClients.values()).filter(function(c) {
@@ -300,14 +312,14 @@ wss.on('connection', function(ws) {
     return pinger.isOnline(c.mac) !== false;
   });
   ws.send(JSON.stringify({
-    type:         'clients',
-    clients:      visibleOnConnect,
-    apStatus:     apStatus,
+    type:          'clients',
+    clients:       visibleOnConnect,
+    apStatus:      apStatus,
     mqttConnected: mqttModule.isConnected(),
-    dbHealthy:    dbHealthy,
-    version:      pkg.version,
-    repoUrl:      pkg.repository.url,
-    timestamp:    new Date().toISOString()
+    dbHealthy:     dbHealthy,
+    version:       pkg.version,
+    repoUrl:       pkg.repository.url,
+    timestamp:     new Date().toISOString(),
   }));
   ws.send(JSON.stringify({ type: 'log_history', entries: logger.list() }));
   ws.on('close', function() { logger.debug('[WS] Client disconnected'); });
@@ -332,7 +344,7 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   var prefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
   mqttModule.publish(prefix + '/clients/' + mac + '/state', online ? 'online' : 'offline');
-// When a discovered client comes back online, reset first_seen to now so
+  // When a discovered client comes back online, reset first_seen to now so
   // the timestamp reflects the start of the current online session, not the
   // original discovery time (which may be days/weeks old).
   if (online) {
@@ -348,7 +360,6 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
     var c = currentClients.get(mac);
     if (c) c.first_seen = now;
   }
-
   broadcastState();
 });
 
