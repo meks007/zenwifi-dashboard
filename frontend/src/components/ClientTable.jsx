@@ -214,91 +214,121 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
               <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.474l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/>
             </svg>
           </button>
+          {!isDefaultSort && (
+            <button
+              onClick={resetSort}
+              title="Reset sort"
+              className="p-1.5 rounded-lg border bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors"
+            >
+              <svg viewBox="0 0 16 16" className="w-4 h-4" fill="currentColor">
+                <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+                <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+              </svg>
+            </button>
+          )}
+          {hasFilter && (
+            <button
+              onClick={clearAll}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors whitespace-nowrap"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
+
+        {chips.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {chips.map(function(chip, i) {
+              return (
+                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-700/50 text-blue-300 text-xs rounded-full px-2 py-0.5">
+                  {chip.label}
+                  <button onClick={chip.remove} className="text-blue-400 hover:text-blue-200 leading-none">&times;</button>
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {showSettings && (
           <ColumnSettingsPanel
             columns={columns}
-            setColumns={setColumns}
-            defaultColumns={DEFAULT_COLUMNS}
-            isMobile={isMobile}
+            onChange={setColumns}
+            onClose={function() { setShowSettings(false); }}
           />
-        )}
-
-        {chips.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 items-center">
-            {chips.map(function(chip, i) {
-              return (
-                <span key={i} className="inline-flex items-center gap-1 bg-blue-900/40 border border-blue-700/50 text-blue-300 text-xs rounded-full px-2.5 py-0.5">
-                  {chip.label}
-                  <button onClick={chip.remove} className="hover:text-white leading-none">&times;</button>
-                </span>
-              );
-            })}
-            <button onClick={clearAll} className="text-xs text-gray-500 hover:text-gray-300 ml-1">Clear all</button>
-          </div>
         )}
       </div>
 
-      {/* Table scroll area */}
+      {/* Table scroll container */}
       <div className="flex-1 overflow-y-auto" style={scrollDivStyle}>
         <table style={{ width: tableWidth, tableLayout: isMobile ? 'auto' : 'fixed', borderCollapse: 'collapse' }}>
           <thead className="sticky top-0 z-10 bg-gray-900">
-            <tr>
+            <tr className="border-b border-gray-800">
               {visibleCols.map(function(col) {
                 const sortable = SORTABLE.has(col.id);
+                const style    = isMobile ? {} : { width: getWidth(col) + 'px', minWidth: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px', position: 'relative' };
                 return (
                   <th
                     key={col.id}
-                    style={{ width: isMobile ? undefined : getWidth(col) + 'px', position: 'relative' }}
+                    style={style}
+                    onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
                     className={
-                      'px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider border-b border-gray-800 select-none ' +
+                      'px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider select-none overflow-hidden text-ellipsis whitespace-nowrap ' +
                       (sortable ? 'cursor-pointer hover:text-gray-300' : '')
                     }
-                    onClick={sortable ? function(e) { toggleSort(col.id, e); } : undefined}
                   >
                     {col.label}{sortMark(col.id)}
-                    {!isMobile && <ResizeHandle colId={col.id} onResize={handleResize} onDone={handleResizeDone} />}
+                    {!isMobile && sortable && (
+                      <ResizeHandle
+                        onResize={function(delta) { handleResize(col.id, delta); }}
+                        onDone={handleResizeDone}
+                      />
+                    )}
                   </th>
                 );
               })}
             </tr>
           </thead>
           <tbody>
-            {sorted.length === 0 && (
+            {sorted.length === 0 ? (
               <tr>
-                <td colSpan={visibleCols.length} className="px-3 py-10 text-center text-gray-600 text-sm">
+                <td colSpan={visibleCols.length} className="px-3 py-8 text-center text-gray-600 text-sm">
                   {hasFilter ? 'No clients match the current filter.' : 'No clients connected.'}
                 </td>
               </tr>
+            ) : (
+              sorted.map(function(c) {
+                const isDisc   = c.connectionType === 'discovered';
+                const rowClass = 'border-b border-gray-800/50 transition-colors ' +
+                  (isDisc ? 'hover:bg-amber-900/10' : c.isMeshNode ? 'hover:bg-indigo-900/10' : 'hover:bg-gray-800/40');
+                return (
+                  <tr key={c.mac} className={rowClass}>
+                    {visibleCols.map(function(col) {
+                      return (
+                        <ClientTableCell
+                          key={col.id}
+                          client={c}
+                          col={col}
+                          isMobile={isMobile}
+                          colWidth={getWidth(col)}
+                          meshOnly={meshOnly}
+                          activeAps={activeAps}
+                          activeVendors={activeVendors}
+                          activeOuis={activeOuis}
+                          disconnecting={disconnecting}
+                          onDisconnect={onDisconnect}
+                          pinging={pinging}
+                          onPing={onPing}
+                          onMeshToggle={function() { setMeshOnly(function(v) { return !v; }); }}
+                          onApToggle={function(v) { toggleFacet(setActiveAps, v); }}
+                          onVendorToggle={function(v) { toggleFacet(setActiveVendors, v); }}
+                          onOuiToggle={function(v) { toggleFacet(setActiveOuis, v); }}
+                        />
+                      );
+                    })}
+                  </tr>
+                );
+              })
             )}
-            {sorted.map(function(client) {
-              return (
-                <tr
-                  key={client.mac}
-                  className="border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors"
-                >
-                  {visibleCols.map(function(col) {
-                    return (
-                      <ClientTableCell
-                        key={col.id}
-                        col={col}
-                        client={client}
-                        width={isMobile ? undefined : getWidth(col)}
-                        disconnecting={disconnecting}
-                        onDisconnect={onDisconnect}
-                        pinging={pinging}
-                        onPing={onPing}
-                        toggleFacet={toggleFacet}
-                        setActiveAps={setActiveAps}
-                        setActiveVendors={setActiveVendors}
-                        setActiveOuis={setActiveOuis}
-                      />
-                    );
-                  })}
-                </tr>
-              );
-            })}
           </tbody>
         </table>
       </div>
