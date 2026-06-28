@@ -205,12 +205,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect, ping
             />
           </div>
           <button
-            onClick={function() { setMeshOnly(function(v) { return !v; }); }}
-            className={'text-xs px-2.5 py-1.5 rounded-lg border transition-colors ' + (meshOnly ? 'bg-indigo-900/50 border-indigo-600/60 text-indigo-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')}
-          >
-            Mesh only
-          </button>
-          <button
             onClick={function() { setShowSettings(function(v) { return !v; }); }}
             title="Column settings"
             className={'p-1.5 rounded-lg border transition-colors ' + (showSettings ? 'bg-blue-900/40 border-blue-600/50 text-blue-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')}
