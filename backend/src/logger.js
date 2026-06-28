@@ -68,10 +68,23 @@ function rotate() {
   logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
 }
 
+function purgeLogFiles() {
+  // Delete the current log file and all rotated copies so every startup
+  // begins with a completely fresh set of logs.
+  for (var i = logMaxRotations; i >= 1; i--) {
+    try { fs.unlinkSync(rotatedPath(i)); } catch (_) {}
+  }
+  try { fs.unlinkSync(logFilePath); } catch (_) {}
+}
+
 function initFileLog(filePath, maxBytes, maxRotations) {
   logFilePath     = filePath;
   logMaxBytes     = (maxBytes     > 0) ? maxBytes     : 10 * 1024 * 1024;
   logMaxRotations = (maxRotations > 0) ? maxRotations : 3;
+
+  // Remove any log files left over from the previous run before writing
+  // anything, so the client always sees a clean history on reconnect.
+  purgeLogFiles();
 
   // Ensure the directory exists
   try { fs.mkdirSync(path.dirname(logFilePath), { recursive: true }); } catch (_) {}
