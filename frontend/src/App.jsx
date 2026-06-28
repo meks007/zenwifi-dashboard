@@ -3,11 +3,10 @@ import ClientTable from './components/ClientTable.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import LogView from './components/LogView.jsx';
 
-const WS_URL = 'ws://' + window.location.host + '/ws';
+const WS_URL          = 'ws://' + window.location.host + '/ws';
 const RECONNECT_DELAY_MS = 3000;
 const MAX_LOG_ENTRIES = 50000;
-const VERSION  = 'v0.1.2';
-const REPO_URL = 'https://github.com/meks007/zenwifi-dashboard';
+const REPO_URL        = 'https://github.com/meks007/zenwifi-dashboard';
 
 export default function App() {
   const [clients, setClients]             = useState([]);
@@ -20,6 +19,7 @@ export default function App() {
   const [toast, setToast]                 = useState(null);
   const [logs, setLogs]                   = useState([]);
   const [activeTab, setActiveTab]         = useState('clients');
+  const [version, setVersion]             = useState(null);
   const wsRef = useRef(null);
 
   const showToast = useCallback(function(msg, type) {
@@ -50,6 +50,7 @@ export default function App() {
           setMqttConnected(!!data.mqttConnected);
           if (typeof data.dbHealthy === 'boolean') setDbHealthy(data.dbHealthy);
           setLastUpdated(data.timestamp);
+          if (data.version) setVersion('v' + data.version);
         }
 
         if (data.type === 'db_status') {
@@ -118,7 +119,9 @@ export default function App() {
           <span className="text-sm text-gray-500">
             {lastUpdated && 'Updated ' + new Date(lastUpdated).toLocaleTimeString()}
           </span>
-          <span className="text-xs text-gray-600 border border-gray-700 rounded px-1.5 py-0.5 font-mono">{VERSION}</span>
+          {version && (
+            <span className="text-xs text-gray-600 border border-gray-700 rounded px-1.5 py-0.5 font-mono">{version}</span>
+          )}
           <a
             href={REPO_URL}
             target="_blank"
