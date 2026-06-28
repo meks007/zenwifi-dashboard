@@ -8,11 +8,19 @@ function registerRoutes(app, deps) {
   var getCurrentClients = deps.getCurrentClients;
   var handleDisconnect  = deps.handleDisconnect;
   var getDbHealthy      = deps.getDbHealthy;
+  var handlePing        = deps.handlePing;
 
   app.post('/api/disconnect', async function(req, res) {
     var mac = (req.body.mac || '').toLowerCase().trim();
     if (!mac) return res.status(400).json({ success: false, error: 'mac required' });
     var result = await handleDisconnect(mac);
+    res.status(result.success ? 200 : 400).json(result);
+  });
+
+  app.post('/api/ping', async function(req, res) {
+    var mac = (req.body.mac || '').toLowerCase().trim();
+    if (!mac) return res.status(400).json({ success: false, error: 'mac required' });
+    var result = await handlePing(mac);
     res.status(result.success ? 200 : 400).json(result);
   });
 
