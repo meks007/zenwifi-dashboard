@@ -3,7 +3,7 @@
 const mqtt = require('mqtt');
 
 let mqttClient = null;
-let appConfig = null;
+let appConfig  = null;
 let onDisconnectRequest = null;
 
 function getPrefix() {
@@ -55,9 +55,9 @@ function connect(cfg, disconnectCallback) {
     }
   });
 
-  mqttClient.on('error', function (e) { console.error('[MQTT] Error:', e.message); });
-  mqttClient.on('reconnect', function () { console.log('[MQTT] Reconnecting...'); });
-  mqttClient.on('offline', function () { console.log('[MQTT] Offline'); });
+  mqttClient.on('error',     function (e) { console.error('[MQTT] Error:', e.message); });
+  mqttClient.on('reconnect', function ()  { console.log('[MQTT] Reconnecting...'); });
+  mqttClient.on('offline',   function ()  { console.log('[MQTT] Offline'); });
 }
 
 function publish(topic, payload, retain) {
@@ -71,34 +71,34 @@ function publish(topic, payload, retain) {
  * Publish per-client and per-AP state topics, plus a global stats summary.
  *
  * Per client (retained):
- *   <prefix>/clients/<mac>/state      online | offline
- *   <prefix>/clients/<mac>/last_seen  ISO timestamp
- *   <prefix>/clients/<mac>/ap         AP name
- *   <prefix>/clients/<mac>/info       JSON: hostname, ip, rssi, iface,
- *                                          tx_bytes, rx_bytes
+ *   <prefix>/clients/<mac>/state        online | offline
+ *   <prefix>/clients/<mac>/last_seen    ISO timestamp of the current poll cycle
+ *   <prefix>/clients/<mac>/first_seen   ISO timestamp from the DB (session start)
+ *   <prefix>/clients/<mac>/ap           AP name
+ *   <prefix>/clients/<mac>/info         JSON: hostname, ip, rssi, iface, tx_bytes, rx_bytes
  *
  * Per AP (retained):
- *   <prefix>/ap/<name>/status         JSON: online, clients, last_seen, error
+ *   <prefix>/ap/<name>/status           JSON: online, clients, last_seen, error
  *
  * Global (retained):
- *   <prefix>/stats                    JSON: total_clients, mesh_nodes,
- *                                          regular_clients, timestamp
+ *   <prefix>/stats                      JSON: total_clients, mesh_nodes, regular_clients, timestamp
  */
 function publishClientStates(prevClients, currentClients, apStatus) {
   const prefix = getPrefix();
   const now = new Date().toISOString();
 
   currentClients.forEach(function (c, mac) {
-    publish(prefix + '/clients/' + mac + '/state', 'online');
-    publish(prefix + '/clients/' + mac + '/last_seen', now);
-    publish(prefix + '/clients/' + mac + '/ap', c.apName || '');
+    publish(prefix + '/clients/' + mac + '/state',      'online');
+    publish(prefix + '/clients/' + mac + '/last_seen',  now);
+    publish(prefix + '/clients/' + mac + '/first_seen', c.first_seen || null);
+    publish(prefix + '/clients/' + mac + '/ap',         c.apName || '');
     publish(prefix + '/clients/' + mac + '/info', {
-      hostname: c.hostname || null,
-      ip: c.ip || null,
-      rssi: c.rssi != null ? c.rssi : null,
-      iface: c.iface || null,
-      tx_bytes: c.tx_bytes != null ? c.tx_bytes : null,
-      rx_bytes: c.rx_bytes != null ? c.rx_bytes : null,
+      hostname: c.hostname  || null,
+      ip:       c.ip        || null,
+      rssi:     c.rssi      != null ? c.rssi      : null,
+      iface:    c.iface     || null,
+      tx_bytes: c.tx_bytes  != null ? c.tx_bytes  : null,
+      rx_bytes: c.rx_bytes  != null ? c.rx_bytes  : null,
     });
   });
 
@@ -116,28 +116,30 @@ function publishClientStates(prevClients, currentClients, apStatus) {
         if (c.apName === apName && !c.isMeshNode) apClients++;
       });
       publish(prefix + '/ap/' + apName + '/status', {
-        online: !!ap.online,
-        clients: apClients,
+        online:    !!ap.online,
+        clients:   apClients,
         last_seen: ap.lastSeen || null,
-        error: ap.error || null,
+        error:     ap.error    || null,
       });
     });
   }
 
-  var meshCount = 0;
+  var meshCount    = 0;
   var regularCount = 0;
   currentClients.forEach(function (c) {
     if (c.isMeshNode) meshCount++;
     else regularCount++;
   });
   publish(prefix + '/stats', {
-    total_clients: regularCount + meshCount,
-    mesh_nodes: meshCount,
+    total_clients:   regularCount + meshCount,
+    mesh_nodes:      meshCount,
     regular_clients: regularCount,
-    timestamp: now,
+    timestamp:       now,
   });
 }
 
-function isConnected() { return !!(mqttClient && mqttClient.connected); }
+function isConnected() {
+  return !!(mqttClient && mqttClient.connected);
+}
 
 module.exports = { connect, publishClientStates, isConnected, publish };
