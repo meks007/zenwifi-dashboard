@@ -227,8 +227,6 @@ export default function App() {
             dbHealthy={dbHealthy}
             apStatus={apStatus}
             clientCount={clients.length}
-            debugMode={debugMode}
-            onToggleDebug={handleToggleDebug}
           />
         </div>
 
@@ -251,15 +249,16 @@ export default function App() {
           })}
         </div>
 
-        {/* Mobile: height is unconstrained, the page scrolls naturally. */}
-        <div className="flex-1 sm:overflow-hidden py-3 flex justify-center">
+        <div className="flex-1 sm:overflow-hidden mt-3">
           {activeTab === 'clients' && (
             <ClientTable
               clients={clients}
+              apStatus={apStatus}
               disconnecting={disconnecting}
-              onDisconnect={handleDisconnect}
               pinging={pinging}
+              onDisconnect={handleDisconnect}
               onPing={handlePing}
+              onLogSearch={handleLogSearch}
               search={clientSearch}
               onSearchChange={setClientSearch}
               activeAps={clientActiveAps}
@@ -270,10 +269,8 @@ export default function App() {
               onActiveOuisChange={setClientActiveOuis}
               meshOnly={clientMeshOnly}
               onMeshOnlyChange={setClientMeshOnly}
-              onLogSearch={handleLogSearch}
             />
           )}
-
           {activeTab === 'logs' && (
             <LogView
               logs={logs}
@@ -282,18 +279,18 @@ export default function App() {
               search={logSearch}
               onSearchChange={setLogSearch}
               onRequestHistory={handleRequestHistory}
+              debugMode={debugMode}
+              onToggleDebug={handleToggleDebug}
             />
           )}
         </div>
       </main>
 
       {toast && (
-        <div
-          className={
-            'fixed bottom-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-xl shadow-xl text-sm font-medium z-50 ' +
-            (toast.type === 'success' ? 'bg-green-700 text-white' : 'bg-red-700 text-white')
-          }
-        >
+        <div className={
+          'fixed bottom-4 right-4 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50 ' +
+          (toast.type === 'success' ? 'bg-green-700 text-white' : 'bg-red-700 text-white')
+        }>
           {toast.msg}
         </div>
       )}
