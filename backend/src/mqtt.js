@@ -1,6 +1,7 @@
 'use strict';
 
-const mqtt = require('mqtt');
+const mqtt   = require('mqtt');
+const logger = require('./logger');
 
 let mqttClient = null;
 let appConfig  = null;
@@ -15,7 +16,7 @@ function connect(cfg, disconnectCallback) {
   onDisconnectRequest = disconnectCallback;
 
   if (!cfg.mqtt || !cfg.mqtt.host) {
-    console.log('[MQTT] No broker configured, skipping.');
+    logger.info('[MQTT] No broker configured, skipping.');
     return;
   }
 
@@ -37,12 +38,12 @@ function connect(cfg, disconnectCallback) {
   });
 
   mqttClient.on('connect', function () {
-    console.log('[MQTT] Connected to ' + url);
+    logger.info('[MQTT] Connected to ' + url);
     publish(prefix + '/bridge/state', 'online', true);
     const topic = prefix + '/clients/+/disconnect';
     mqttClient.subscribe(topic, { qos: 1 }, function (err) {
-      if (err) console.error('[MQTT] Subscribe error:', err.message);
-      else     console.log('[MQTT] Subscribed to ' + topic);
+      if (err) logger.error('[MQTT] Subscribe error: ' + err.message);
+      else     logger.info('[MQTT] Subscribed to ' + topic);
     });
   });
 
@@ -50,14 +51,14 @@ function connect(cfg, disconnectCallback) {
     const re = new RegExp('^' + getPrefix() + '/clients/([^/]+)/disconnect$');
     const m  = topic.match(re);
     if (m) {
-      console.log('[MQTT] Disconnect request for MAC: ' + m[1]);
+      logger.info('[MQTT] Disconnect request for MAC: ' + m[1]);
       if (onDisconnectRequest) onDisconnectRequest(m[1]);
     }
   });
 
-  mqttClient.on('error',     function (e) { console.error('[MQTT] Error:', e.message); });
-  mqttClient.on('reconnect', function ()  { console.log('[MQTT] Reconnecting...'); });
-  mqttClient.on('offline',   function ()  { console.log('[MQTT] Offline'); });
+  mqttClient.on('error',     function (e) { logger.error('[MQTT] Error: ' + e.message); });
+  mqttClient.on('reconnect', function ()  { logger.warn('[MQTT] Reconnecting...'); });
+  mqttClient.on('offline',   function ()  { logger.warn('[MQTT] Offline'); });
 }
 
 function publish(topic, payload, retain) {
@@ -199,7 +200,7 @@ function publishDiscovery(mac, haDiscovery) {
     },
   };
 
-  console.log('[HA Discovery] Publishing button for ' + normMac + ' -> ' + configTopic);
+  logger.debug('[HA Discovery] Publishing button for ' + normMac + ' -> ' + configTopic);
   mqttClient.publish(configTopic, JSON.stringify(payload), { retain: true, qos: 1 });
 }
 
@@ -221,7 +222,7 @@ function unpublishDiscovery(mac, haDiscovery) {
 
   var configTopic = haPrefix + '/button/zenwifi_' + macSafe + '/config';
 
-  console.log('[HA Discovery] Clearing button for ' + normMac + ' -> ' + configTopic);
+  logger.info('[HA Discovery] Clearing button for ' + normMac + ' -> ' + configTopic);
   mqttClient.publish(configTopic, '', { retain: true, qos: 1 });
 }
 
