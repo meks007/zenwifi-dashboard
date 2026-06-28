@@ -27,6 +27,7 @@ const wss    = new WebSocket.Server({ server: server });
 logger.setBroadcaster(function(payload) { broadcast(payload); });
 
 const config               = configModule.loadConfig();
+const haDiscovery          = configModule.getHaDiscoveryConfig(config);
 logger.setDebug(!!config.debug_logging);
 logger.setMaxLines(config.log_buffer_size || 500);
 
@@ -41,7 +42,6 @@ let currentClients = new Map();
 let prevClients    = new Map();
 let apStatus       = {};
 var dbHealthy      = true;
-
 const apFailCount = {};
 aps.forEach(function(ap) { apFailCount[ap.name] = 0; });
 // ---------------------------------------------------------------------------
@@ -78,8 +78,7 @@ async function poll() {
   let meshMap         = new Map();
   let nodeGroups      = new Map();
   let neighMap        = {};
-
-  if (masterAp) {
+if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
     var meshResult = await sshModule.fetchMeshNodeMacs(masterAp);
@@ -107,7 +106,7 @@ await Promise.allSettled(aps.map(async function(ap) {
         logger.warn('[Poll] AP ' + ap.name + ' reached failure threshold (' + FAILURE_THRESHOLD + '), clearing its clients.');
       }
     }
-  }));
+}));
 const enriched = allRawClients.map(function(c) {
     return Object.assign({}, c, { vendor: c.isMeshNode ? null : ouiModule.lookup(c.mac) });
   });
@@ -122,8 +121,7 @@ const enriched = allRawClients.map(function(c) {
       hostname:       (!c.isMeshNode && dhcp && dhcp.hostname) ? dhcp.hostname : (c.hostname || null),
     });
   });
-
-  var allClients = dhcpEnriched;
+var allClients = dhcpEnriched;
   var ndCfg      = config.opnsense && config.opnsense.neighbor_discovery;
 
   if (opnsense.isNeighborDiscoveryEnabled(config.opnsense)) {
@@ -167,8 +165,7 @@ if (discoveredRows.length > 0) logger.debug('[Poll] Merging ' + discoveredRows.l
     freshClients.forEach(function(c, mac) {
       var prev        = prevClients.get(mac);
       var typeChanged = prev && prev.connectionType !== c.connectionType;
-
-      if (typeChanged) {
+if (typeChanged) {
         // Connection type changed (e.g. wifi -> discovered): treat as a new session.
         db.setFirstSeen(mac, now);
         logger.debug('[DB] first_seen reset for ' + mac + ': connection type changed (' + prev.connectionType + ' -> ' + c.connectionType + ')');
@@ -207,8 +204,7 @@ prevClients.forEach(function(_c, mac) {
         }
       }
     });
-
-    if (!dbHealthy) { dbHealthy = true; logger.info('[DB] Database recovered.'); broadcast({ type: 'db_status', healthy: true }); }
+if (!dbHealthy) { dbHealthy = true; logger.info('[DB] Database recovered.'); broadcast({ type: 'db_status', healthy: true }); }
   } catch (dbErr) {
     logger.error('[DB] Error during timestamp update: ' + dbErr.message);
     if (dbHealthy) { dbHealthy = false; broadcast({ type: 'db_status', healthy: false }); }
@@ -217,9 +213,27 @@ prevClients.forEach(function(_c, mac) {
   prevClients    = currentClients;
   currentClients = freshClients;
   mqttModule.publishClientStates(prevClients, currentClients, apStatus, pinger.isOnline);
+
+  // ---------------------------------------------------------------------------
+  // HA MQTT Discovery: publish button for new/existing wifi clients,
+  // unpublish for clients that just left. Mesh nodes are skipped -- they are
+  // not tracked as individual HA devices by AsusRouter.
+  // ---------------------------------------------------------------------------
+  if (haDiscovery) {
+    currentClients.forEach(function(c, mac) {
+      if (!c.isMeshNode && c.connectionType !== 'discovered') {
+        mqttModule.publishDiscovery(mac, haDiscovery);
+      }
+    });
+    prevClients.forEach(function(_c, mac) {
+      if (!currentClients.has(mac)) {
+        mqttModule.unpublishDiscovery(mac, haDiscovery);
+      }
+    });
+  }
+
   broadcastState();
 }
-
 // ---------------------------------------------------------------------------
 // Disconnect handler
 // ---------------------------------------------------------------------------
@@ -258,7 +272,7 @@ async function handlePing(mac) {
         db.setFirstSeen(mac, now);
         var c2 = currentClients.get(mac);
         if (c2) c2.first_seen = now;
-        logger.debug('[DB] first_seen reset for ' + mac + ' on manual ping (came online)');
+logger.debug('[DB] first_seen reset for ' + mac + ' on manual ping (came online)');
       } catch (dbErr) {
         logger.error('[DB] Failed to reset first_seen for ' + mac + ' on manual ping: ' + dbErr.message);
       }
@@ -270,7 +284,6 @@ async function handlePing(mac) {
     return { success: false, error: err.message };
   }
 }
-
 // ---------------------------------------------------------------------------
 // HTTP routes + WebSocket
 // ---------------------------------------------------------------------------
@@ -308,13 +321,13 @@ logger.info('[Server] Poll interval: ' + pollInterval / 1000 + 's');
 logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInterval + ' poll cycle(s)');
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
 logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
+logger.info('[Server] HA MQTT Discovery: ' + (haDiscovery ? 'enabled (prefix: ' + haDiscovery.prefix + ')' : 'disabled'));
 
 const preloaded = db.loadAll();
 logger.info('[DB] Loaded ' + preloaded.size + ' persisted first_seen record(s)');
 
 mqttModule.connect(config, handleDisconnect);
 opnsense.startPolling(config.opnsense);
-
 pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   var prefix = (config.mqtt && config.mqtt.topic_prefix) || 'zenwifi';
