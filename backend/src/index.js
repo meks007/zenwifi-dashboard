@@ -11,6 +11,7 @@ const logger = require('./logger');
 const ouiModule = require('./oui');
 const opnsense = require('./opnsense');
 const pinger = require('./pinger');
+const db = require('./db');
 
 const app = express();
 app.use(cors());
@@ -58,6 +59,7 @@ function broadcast(data) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   });
 }
+
 function broadcastState() {
   // Exclude discovered clients that are definitively offline.
   // Clients not yet checked (isOnline == null) are included so they appear
@@ -101,7 +103,8 @@ function filterIp(ip) {
 function collapseMeshNodes(rawClients) {
   const regular = [];
   const nodeMap = new Map();
-rawClients.forEach(function(c) {
+
+  rawClients.forEach(function(c) {
     if (!c.isMeshNode) {
       regular.push(c);
       return;
@@ -159,12 +162,12 @@ function resolveIfaceLabel(ifaceName, ndCfg) {
 
 async function poll() {
   const allRawClients = [];
-
   let clientlistMap = null;
   let meshMap = new Map();
   let nodeGroups = new Map();
   let neighMap = {};
-if (masterAp) {
+
+  if (masterAp) {
     clientlistMap = await sshModule.fetchClientlistJson(masterAp);
     if (!clientlistMap) {
       logger.warn('[Poll] clientlist.json unavailable from master ' + masterAp.name + ', falling back to ARP only');
@@ -197,14 +200,13 @@ if (masterAp) {
       apFailCount[ap.name] = (apFailCount[ap.name] || 0) + 1;
       const failCount = apFailCount[ap.name];
       logger.error('[Poll] AP ' + ap.name + ' failed (attempt ' + failCount + '/' + FAILURE_THRESHOLD + '): ' + err.message);
-
       apStatus[ap.name] = {
         online: false,
         clients: apStatus[ap.name] ? (apStatus[ap.name].clients || 0) : 0,
         lastSeen: apStatus[ap.name] ? apStatus[ap.name].lastSeen : null,
         error: err.message,
       };
-if (failCount < FAILURE_THRESHOLD) {
+      if (failCount < FAILURE_THRESHOLD) {
         // Carry over the clients from the previous successful poll for this AP
         currentClients.forEach(function(c) {
           if (c.apName === ap.name) allRawClients.push(c);
@@ -299,8 +301,37 @@ if (failCount < FAILURE_THRESHOLD) {
     allClients = dhcpEnriched.concat(discoveredRows);
   }
 
+  const now = new Date().toISOString();
   const freshClients = new Map();
   allClients.forEach(function(c) { freshClients.set(c.mac, c); });
+
+  // --- Timestamp persistence ---
+  // A client that was not in the previous poll (or is brand new) just came
+  // online: record a fresh first_seen timestamp (this also covers reconnects).
+  // A client that was in the previous poll but is gone now went offline:
+  // remove its record so the next appearance gets a clean timestamp.
+  freshClients.forEach(function(c, mac) {
+    if (!prevClients.has(mac)) {
+      // Client just appeared (new or returned) - write a fresh timestamp.
+      db.setFirstSeen(mac, now);
+      logger.debug('[DB] first_seen set for ' + mac);
+    }
+  });
+
+  prevClients.forEach(function(_c, mac) {
+    if (!freshClients.has(mac)) {
+      // Client disappeared - clear its timestamp.
+      db.deleteFirstSeen(mac);
+      logger.debug('[DB] first_seen cleared for ' + mac);
+    }
+  });
+
+  // Attach first_seen to every outgoing client object.
+  freshClients.forEach(function(c, mac) {
+    c.first_seen = db.getFirstSeen(mac) || null;
+  });
+  // --- End timestamp persistence ---
+
   prevClients = currentClients;
   currentClients = freshClients;
   mqttModule.publishClientStates(prevClients, currentClients, apStatus);
@@ -337,6 +368,7 @@ async function handleDisconnect(mac) {
     return { success: false, error: err.message };
   }
 }
+
 // REST: POST /api/disconnect { mac }
 app.post('/api/disconnect', async function(req, res) {
   const mac = (req.body.mac || '').toLowerCase().trim();
@@ -370,6 +402,13 @@ logger.info('[Server] Interface discovery interval: every ' + ifaceDiscoveryInte
 logger.info('[Server] IPv6 addresses: ' + (showIpv6 ? 'shown' : 'hidden'));
 logger.info('[Server] Discovered client ping interval: ' + pingIntervalMinutes + ' minute(s)');
 
+// Pre-load all timestamps from the DB so that clients already online before
+// this startup cycle get their historical first_seen restored immediately.
+// The Map is keyed by MAC - the first poll() will attach these to the
+// outgoing client objects via db.getFirstSeen().
+const _preloaded = db.loadAll();
+logger.info('[DB] Loaded ' + _preloaded.size + ' persisted first_seen record(s) from ' + require('path').join(process.env.DATA_DIR || '/data', 'clients.db'));
+
 mqttModule.connect(config, handleDisconnect);
 
 // Start OPNsense DHCP polling (no-op with a warning if not configured)
@@ -381,6 +420,7 @@ pinger.start(pingIntervalMinutes, function(mac, online) {
   logger.info('[Pinger] ' + mac + ' flipped to ' + (online ? 'online' : 'offline') + ' - broadcasting update');
   broadcastState();
 });
+
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, function() {
   logger.info('[Server] Listening on port ' + PORT);
