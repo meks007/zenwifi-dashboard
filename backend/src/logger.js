@@ -22,8 +22,7 @@
 //     receive the tail on connect and live entries thereafter.
 //
 //   setDebug(bool) / isDebug()
-//     Enable/disable debug-level output at runtime. isDebug() returns the
-//     current state so callers (e.g. the API route) can read it back.
+//     Enable/disable debug-level output. isDebug() returns the current state.
 //
 //   info / warn / error / debug
 //     Standard log methods.
