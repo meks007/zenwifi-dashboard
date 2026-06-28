@@ -44,10 +44,12 @@ export default function ClientTableCell({
         <VendorCell
           client={client}
           style={style}
+          isMeshActive={meshOnly}
           activeVendors={activeVendors}
           activeOuis={activeOuis}
-          onVendorToggle={onVendorToggle}
-          onOuiToggle={onOuiToggle}
+          onMeshClick={onMeshToggle}
+          onVendorClick={onVendorToggle}
+          onOuiClick={onOuiToggle}
         />
       );
 
