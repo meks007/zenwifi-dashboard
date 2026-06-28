@@ -12,7 +12,7 @@ const ouiModule   = require('./oui');
 const opnsense    = require('./opnsense');
 const pinger      = require('./pinger');
 const db          = require('./db');
-const pkg         = require('../../package.json');
+const pkg         = require('../package.json');
 
 const app = express();
 app.use(cors());
