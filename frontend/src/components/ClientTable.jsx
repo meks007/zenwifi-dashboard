@@ -208,6 +208,9 @@ function VendorCell({ client, isMeshActive, activeVendors, activeOuis, onMeshCli
 }
 
 // ---- ColumnSettingsPanel ----
+// Rendered inline inside the toolbar div -- no absolute positioning.
+// The gear button toggles showSettings in the parent; this panel mounts/unmounts
+// in the DOM flow, pushing the header and table down when open.
 function ColumnSettingsPanel({ columns, onChange, onClose }) {
   const dragIdx = useRef(null);
   const [localCols, setLocalCols] = useState(columns);
@@ -256,10 +259,7 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
   }
 
   return (
-    // right-0 aligns panel right edge with the gear button right edge.
-    // max-w-[calc(100vw-1rem)] prevents it from overflowing the left edge of
-    // the viewport on narrow mobile screens where w-80 (320px) would be too wide.
-    <div className="absolute right-0 top-8 z-50 w-80 max-w-[calc(100vw-1rem)] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-3 select-none">
+    <div className="w-full bg-gray-800/50 border-t border-gray-700/60 p-3 select-none">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Columns</span>
         <div className="flex gap-2 items-center">
@@ -329,17 +329,18 @@ function ColumnSettingsPanel({ columns, onChange, onClose }) {
 }
 
 // ---- ResizeHandle ----
-// Only rendered on desktop; not shown on mobile.
 function ResizeHandle({ onResize, onDone }) {
-  const startX = useRef(null);
+  const startX  = useRef(null);
+  const startVal = useRef(null);
 
   function onMouseDown(e) {
     e.preventDefault();
-    e.stopPropagation();
     startX.current = e.clientX;
+    startVal.current = 0;
     function onMove(ev) {
-      onResize(ev.clientX - startX.current);
-      startX.current = ev.clientX;
+      const delta = ev.clientX - startX.current;
+      onResize(delta - startVal.current);
+      startVal.current = delta;
     }
     function onUp() {
       document.removeEventListener('mousemove', onMove);
@@ -351,21 +352,19 @@ function ResizeHandle({ onResize, onDone }) {
   }
 
   return (
-    <span
+    <div
       onMouseDown={onMouseDown}
       className="absolute right-0 top-0 h-full w-2 cursor-col-resize flex items-center justify-center group/rh select-none z-10"
-      title="Drag to resize"
     >
       <span className="w-px h-4 bg-gray-700 group-hover/rh:bg-blue-500 transition-colors rounded-full"></span>
-    </span>
+    </div>
   );
 }
 
-// ---- Sortable column ids (actions excluded) ----
 const SORTABLE = new Set(['mac', 'vendor', 'hostname', 'ip', 'apName', 'iface', 'rssi', 'tx_bytes', 'rx_bytes', 'first_seen']);
 
 // ---- ClientTable ----
-export default function ClientTable({ clients, disconnecting, onDisconnect }) {
+export default function ClientTable({ clients }) {
   const [search, setSearch]               = useState('');
   const [sortCols, setSortCols]           = useState(DEFAULT_SORT);
   const [activeAps, setActiveAps]         = useState(new Set());
@@ -373,7 +372,6 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
   const [activeOuis, setActiveOuis]       = useState(new Set());
   const [meshOnly, setMeshOnly]           = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
-  const settingsRef = useRef(null);
 
   // Use matchMedia for breakpoint detection. This is driven by the CSS engine
   // and never fires spuriously due to mobile viewport reflows (address bar,
@@ -416,14 +414,8 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   useEffect(function() { saveColumnPrefs(columns); }, [columns]);
 
-  useEffect(function() {
-    if (!showSettings) return;
-    function handler(e) {
-      if (settingsRef.current && !settingsRef.current.contains(e.target)) setShowSettings(false);
-    }
-    document.addEventListener('mousedown', handler);
-    return function() { document.removeEventListener('mousedown', handler); };
-  }, [showSettings]);
+  // Outside-click-to-close removed: the settings panel is now an inline
+  // accordion that pushes content down, so no floating overlay to dismiss.
 
   // Refresh relative timestamps every 30 s.
   const [, setTick] = useState(0);
@@ -439,15 +431,50 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   // Desktop: sum of fixed px column widths. Mobile: auto layout.
   const tableWidth = isMobile
-    ? null
-    : visibleCols.reduce(function(sum, col) { return sum + getWidth(col); }, 0);
+    ? 'auto'
+    : visibleCols.reduce(function(sum, c) { return sum + getWidth(c); }, 0) + 'px';
 
   function toggleFacet(setter, value) {
     setter(function(prev) {
       const next = new Set(prev);
-      if (next.has(value)) { next.delete(value); } else { next.add(value); }
+      if (next.has(value)) next.delete(value); else next.add(value);
       return next;
     });
+  }
+
+  function toggleSort(key, e) {
+    setSortCols(function(prev) {
+      const multi = e && e.shiftKey;
+      const existing = prev.find(function(s) { return s.key === key; });
+      if (multi) {
+        if (existing) {
+          if (existing.dir === 'asc') return prev.map(function(s) { return s.key === key ? { key, dir: 'desc' } : s; });
+          return prev.filter(function(s) { return s.key !== key; });
+        }
+        return prev.concat([{ key, dir: 'asc' }]);
+      }
+      if (existing && prev.length === 1) {
+        if (existing.dir === 'asc') return [{ key, dir: 'desc' }];
+        return DEFAULT_SORT;
+      }
+      return [{ key, dir: 'asc' }];
+    });
+  }
+
+  function resetSort() { setSortCols(DEFAULT_SORT); }
+
+  const isDefaultSort = sortCols.length === 1 && sortCols[0].key === 'ip' && sortCols[0].dir === 'asc';
+
+  function sortMark(key) {
+    const s = sortCols.find(function(c) { return c.key === key; });
+    if (!s) return null;
+    const idx = sortCols.indexOf(s);
+    return (
+      <span className="ml-1 text-blue-400 text-xs">
+        {s.dir === 'asc' ? '\u2191' : '\u2193'}
+        {sortCols.length > 1 ? <sup className="text-blue-500/70">{idx + 1}</sup> : null}
+      </span>
+    );
   }
 
   function clearAll() {
@@ -458,21 +485,18 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
     setMeshOnly(false);
   }
 
-  const hasFilter = search.length > 0 || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly;
+  const q = search.trim().toLowerCase();
 
   const filtered = clients.filter(function(c) {
     if (meshOnly && !c.isMeshNode) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const hit = (
-        (c.mac      && c.mac.toLowerCase().includes(q)) ||
-        (c.vendor   && c.vendor.toLowerCase().includes(q)) ||
+    if (q) {
+      const hit =
+        (c.mac      && c.mac.toLowerCase().includes(q))      ||
+        (c.vendor   && c.vendor.toLowerCase().includes(q))   ||
         (c.hostname && c.hostname.toLowerCase().includes(q)) ||
-        (c.ip       && c.ip.toLowerCase().includes(q)) ||
-        (c.apName   && c.apName.toLowerCase().includes(q)) ||
-        (c.isMeshNode && 'mesh node'.includes(q)) ||
-        (c.connectionType === 'discovered' && 'discovered'.includes(q))
-      );
+        (c.ip       && c.ip.toLowerCase().includes(q))       ||
+        (c.apName   && c.apName.toLowerCase().includes(q))   ||
+        (c.iface    && c.iface.toLowerCase().includes(q));
       if (!hit) return false;
     }
     if (activeAps.size     > 0 && !activeAps.has(c.apName))       return false;
@@ -483,56 +507,25 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
   const sorted = filtered.slice().sort(function(a, b) {
     for (var i = 0; i < sortCols.length; i++) {
-      const cmp = compareByKey(a, b, sortCols[i].key);
-      if (cmp !== 0) return sortCols[i].dir === 'asc' ? cmp : -cmp;
+      const { key, dir } = sortCols[i];
+      const cmp = compareByKey(a, b, key);
+      if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
     }
     return 0;
   });
 
-  function toggleSort(key, event) {
-    const shift = event && event.shiftKey;
-    setSortCols(function(prev) {
-      const idx = prev.findIndex(function(s) { return s.key === key; });
-      if (shift) return prev.filter(function(s) { return s.key !== key; });
-      if (idx === -1) return prev.concat({ key: key, dir: 'asc' });
-      if (prev[idx].dir === 'asc') {
-        return prev.map(function(s, i) { return i === idx ? { key: s.key, dir: 'desc' } : s; });
-      }
-      return prev.filter(function(s) { return s.key !== key; });
-    });
-  }
-
-  function resetSort() { setSortCols(DEFAULT_SORT); }
-
-  function sortMark(key) {
-    const idx = sortCols.findIndex(function(s) { return s.key === key; });
-    if (idx === -1) return null;
-    const arrow = sortCols[idx].dir === 'asc' ? ' (asc)' : ' (desc)';
-    const badge = sortCols.length > 1
-      ? <sup className="ml-0.5 text-blue-400 font-bold">{idx + 1}</sup>
-      : null;
-    return <span className="text-blue-400">{arrow}{badge}</span>;
-  }
-
-  const isDefaultSort =
-    sortCols.length === DEFAULT_SORT.length &&
-    sortCols.every(function(s, i) { return s.key === DEFAULT_SORT[i].key && s.dir === DEFAULT_SORT[i].dir; });
+  const hasFilter = q || activeAps.size > 0 || activeVendors.size > 0 || activeOuis.size > 0 || meshOnly;
 
   const chips = [];
-  if (meshOnly) chips.push({ label: 'Mesh Node', remove: function() { setMeshOnly(false); } });
-  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleFacet(setActiveOuis, v);    } }); });
-  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
+  if (meshOnly) chips.push({ label: 'Mesh only', remove: function() { setMeshOnly(false); } });
   activeAps.forEach(function(v)     { chips.push({ label: 'AP: '     + v, remove: function() { toggleFacet(setActiveAps, v);     } }); });
+  activeVendors.forEach(function(v) { chips.push({ label: 'Vendor: ' + v, remove: function() { toggleFacet(setActiveVendors, v); } }); });
+  activeOuis.forEach(function(v)    { chips.push({ label: 'OUI: '    + v, remove: function() { toggleFacet(setActiveOuis, v);    } }); });
 
-  // On mobile columns have no fixed width; browser auto-sizes.
-  // On desktop each cell gets the stored/default px width.
   function renderCell(c, col) {
-    const isDiscovered = c.connectionType === 'discovered';
     const isMesh       = c.isMeshNode;
-    const style        = isMobile ? {} : (function() {
-      const w = getWidth(col);
-      return { width: w + 'px', minWidth: w + 'px', maxWidth: w + 'px' };
-    })();
+    const isDiscovered = c.connectionType === 'discovered';
+    const style        = isMobile ? {} : { width: getWidth(col) + 'px', minWidth: getWidth(col) + 'px', maxWidth: getWidth(col) + 'px' };
 
     switch (col.id) {
       case 'mac':
@@ -546,7 +539,7 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               isMeshActive={meshOnly}
               activeVendors={activeVendors}
               activeOuis={activeOuis}
-              onMeshClick={function() { setMeshOnly(function(p) { return !p; }); }}
+              onMeshClick={function() { setMeshOnly(function(v) { return !v; }); }}
               onVendorClick={function(v) { toggleFacet(setActiveVendors, v); }}
               onOuiClick={function(v) { toggleFacet(setActiveOuis, v); }}
             />
@@ -567,22 +560,29 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
           </td>
         );
 
-      case 'apName':
+      case 'apName': {
+        const apActive = activeAps.has(c.apName);
+        const apDot    = isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400';
+        const apPill   = apActive
+          ? 'bg-blue-900/50 border-blue-600/60 text-blue-300'
+          : 'bg-gray-800/80 border-gray-700 text-gray-300 hover:bg-gray-700/70 hover:border-gray-500';
         return (
           <td key="apName" style={style} className="px-3 py-3 text-xs overflow-hidden">
-            <button
-              onClick={function(e) { e.stopPropagation(); toggleFacet(setActiveAps, c.apName); }}
-              title={'Filter by AP: ' + c.apName}
-              className={'flex items-center gap-1.5 text-left transition-colors ' + (activeAps.has(c.apName) ? 'text-blue-300' : 'text-gray-400 hover:text-blue-300')}
-            >
-              <span className={
-                'w-1.5 h-1.5 rounded-full flex-shrink-0 ' +
-                (isMesh ? 'bg-indigo-400' : isDiscovered ? 'bg-amber-400' : 'bg-green-400')
-              }></span>
-              <span className="truncate">{c.apName}</span>
-            </button>
+            {c.apName ? (
+              <button
+                onClick={function(e) { e.stopPropagation(); toggleFacet(setActiveAps, c.apName); }}
+                title={'Filter by AP: ' + c.apName}
+                className={'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border transition-colors ' + apPill}
+              >
+                <span className={'w-1.5 h-1.5 rounded-full flex-shrink-0 ' + apDot}></span>
+                <span className="truncate max-w-[7rem]">{c.apName}</span>
+              </button>
+            ) : (
+              <span className="text-gray-600">n/a</span>
+            )}
           </td>
         );
+      }
 
       case 'iface':
         return (
@@ -600,43 +600,38 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
 
       case 'tx_bytes':
         return (
-          <td key="tx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400">
-            {fmtBytes(c.tx_bytes) !== null ? fmtBytes(c.tx_bytes) : <span className="text-gray-600">n/a</span>}
+          <td key="tx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
+            {fmtBytes(c.tx_bytes) || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'rx_bytes':
         return (
-          <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400">
-            {fmtBytes(c.rx_bytes) !== null ? fmtBytes(c.rx_bytes) : <span className="text-gray-600">n/a</span>}
+          <td key="rx_bytes" style={style} className="px-3 py-3 font-mono text-xs text-gray-400 overflow-hidden text-ellipsis whitespace-nowrap">
+            {fmtBytes(c.rx_bytes) || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'first_seen':
         return (
-          <td key="first_seen" style={style} className="px-3 py-3 text-xs text-gray-500" title={fmtAbsolute(c.first_seen)}>
+          <td key="first_seen" style={style} className="px-3 py-3 text-xs text-gray-500 overflow-hidden text-ellipsis whitespace-nowrap" title={fmtAbsolute(c.first_seen)}>
             {fmtRelative(c.first_seen) || <span className="text-gray-600">n/a</span>}
           </td>
         );
 
       case 'actions':
         return (
-          <td key="actions" style={style} className="px-3 py-3 text-right">
-            {/* Only show disconnect for wifi clients -- not mesh nodes or discovered (ARP-only) hosts. */}
-            {!c.isMeshNode && !isDiscovered && (
-              <button
-                onClick={function() { onDisconnect(c.mac); }}
-                disabled={!!disconnecting[c.mac]}
-                className={
-                  'text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ' +
-                  (disconnecting[c.mac]
-                    ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-                    : 'bg-red-600/20 text-red-400 border border-red-600/30 hover:bg-red-600/40 hover:text-red-300')
-                }
-              >
-                {disconnecting[c.mac] ? 'Disconnecting...' : 'Disconnect'}
-              </button>
-            )}
+          <td key="actions" style={style} className="px-3 py-3 text-right overflow-hidden">
+            <a
+              href={'http://' + c.ip}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={function(e) { e.stopPropagation(); }}
+              className="text-xs text-gray-500 hover:text-blue-300 transition-colors font-mono"
+              title={'Open ' + c.ip}
+            >
+              {c.ip}
+            </a>
           </td>
         );
 
@@ -686,31 +681,22 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <div className="relative" ref={settingsRef}>
-              <button
-                onClick={function() { setShowSettings(function(v) { return !v; }); }}
-                title="Configure columns"
-                className={
-                  'p-1.5 rounded-lg border transition-colors ' +
-                  (showSettings
-                    ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
-                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
-                }
-              >
-                <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <rect x="1" y="2" width="4" height="12" rx="0.5"/>
-                  <rect x="6" y="2" width="4" height="12" rx="0.5"/>
-                  <rect x="11" y="2" width="4" height="12" rx="0.5"/>
-                </svg>
-              </button>
-              {showSettings && (
-                <ColumnSettingsPanel
-                  columns={columns}
-                  onChange={setColumns}
-                  onClose={function() { setShowSettings(false); }}
-                />
-              )}
-            </div>
+            <button
+              onClick={function() { setShowSettings(function(v) { return !v; }); }}
+              title="Configure columns"
+              className={
+                'p-1.5 rounded-lg border transition-colors ' +
+                (showSettings
+                  ? 'bg-blue-900/40 border-blue-600/50 text-blue-300'
+                  : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-500')
+              }
+            >
+              <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="1" y="2" width="4" height="12" rx="0.5"/>
+                <rect x="6" y="2" width="4" height="12" rx="0.5"/>
+                <rect x="11" y="2" width="4" height="12" rx="0.5"/>
+              </svg>
+            </button>
             <input
               type="text"
               placeholder="Search..."
@@ -740,6 +726,13 @@ export default function ClientTable({ clients, disconnecting, onDisconnect }) {
               );
             })}
           </div>
+        )}
+        {showSettings && (
+          <ColumnSettingsPanel
+            columns={columns}
+            onChange={setColumns}
+            onClose={function() { setShowSettings(false); }}
+          />
         )}
       </div>
 
