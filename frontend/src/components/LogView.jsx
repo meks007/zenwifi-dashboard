@@ -60,7 +60,7 @@ function parseMsg(msg) {
   return parts;
 }
 
-export default function LogView({ logs, filter, onFilterChange, search, onSearchChange, onRequestHistory }) {
+export default function LogView({ logs, filter, onFilterChange, search, onSearchChange, onRequestHistory, debugMode, onToggleDebug }) {
   // autoScroll = true: follow tail, pin to bottom after every render.
   const [autoScroll, setAutoScroll] = useState(true);
   // Position indicators for showing scroll buttons.
@@ -227,6 +227,30 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
             </button>
           )}
         </div>
+
+        {/* Debug logging toggle -- synced from config.yaml via debug_mode WS message on connect */}
+        {onToggleDebug && (
+          <div className="flex items-center gap-1.5 pl-2 border-l border-gray-700">
+            <span className={"text-xs whitespace-nowrap select-none " + (debugMode ? "text-yellow-400" : "text-gray-500")}>
+              Debug
+            </span>
+            <button
+              onClick={onToggleDebug}
+              title={debugMode ? "Disable debug logging" : "Enable debug logging"}
+              className={
+                "relative inline-flex h-4 w-8 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none " +
+                (debugMode ? "bg-yellow-500" : "bg-gray-700")
+              }
+            >
+              <span
+                className={
+                  "inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform duration-200 " +
+                  (debugMode ? "translate-x-4" : "translate-x-0")
+                }
+              />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Log lines */}
@@ -261,8 +285,8 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
                         className={
                           'font-semibold rounded px-0.5 transition-colors ' +
                           (active
-                            ? 'bg-blue-600/40 text-blue-200 ring-1 ring-blue-500/50'
-                            : 'text-blue-400 hover:bg-blue-900/40 hover:text-blue-200')
+                            ? 'bg-blue-600/40 text-blue-200 hover:bg-blue-600/20'
+                            : 'text-blue-300 hover:bg-blue-900/40')
                         }
                       >
                         {part.value}
@@ -279,8 +303,8 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
                         className={
                           'font-mono rounded px-0.5 transition-colors ' +
                           (macActive
-                            ? 'bg-purple-600/40 text-purple-200 ring-1 ring-purple-500/50'
-                            : 'text-purple-400 hover:bg-purple-900/40 hover:text-purple-200')
+                            ? 'bg-purple-600/40 text-purple-200 hover:bg-purple-600/20'
+                            : 'text-purple-300 hover:bg-purple-900/40')
                         }
                       >
                         {part.value}
@@ -297,8 +321,8 @@ export default function LogView({ logs, filter, onFilterChange, search, onSearch
                         className={
                           'font-mono rounded px-0.5 transition-colors ' +
                           (ipActive
-                            ? 'bg-green-600/40 text-green-200 ring-1 ring-green-500/50'
-                            : 'text-green-400 hover:bg-green-900/40 hover:text-green-200')
+                            ? 'bg-green-600/40 text-green-200 hover:bg-green-600/20'
+                            : 'text-green-300 hover:bg-green-900/40')
                         }
                       >
                         {part.value}
