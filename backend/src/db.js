@@ -91,4 +91,12 @@ function setLastPing(mac, isoTimestamp, resultStr) {
   `).run(mac, mac, isoTimestamp, isoTimestamp, resultStr);
 }
 
-module.exports = { getFirstSeen, setFirstSeen, deleteFirstSeen, loadAll, getLastPing, setLastPing };
+/**
+ * Returns all rows from client_seen as an array of objects.
+ * Used by the housekeeping task to find stale records.
+ */
+function getAllRows() {
+  return db.prepare('SELECT mac, first_seen, last_ping_at, last_ping_result FROM client_seen').all();
+}
+
+module.exports = { getFirstSeen, setFirstSeen, deleteFirstSeen, loadAll, getLastPing, setLastPing, getAllRows };
