@@ -119,25 +119,24 @@ async function runPingCycle() {
   _cycleRunning     = true;
   _lastCycleStartAt = Date.now();
 
-  logger.debug('[Pinger] Starting ping cycle for ' + knownClients.length + ' client(s)');
+  logger.info('[Pinger] Starting ping cycle for ' + knownClients.length + ' client(s)');
 
   var snapshot = knownClients.slice();
-
   for (var i = 0; i < snapshot.length; i++) {
     var entry = snapshot[i];
     if (!entry.ip) continue;
-
     logger.debug('[Pinger] Pinging ' + entry.mac + ' (' + entry.ip + ')');
     var result = await pingOne(entry.ip);
     logger.debug(
       '[Pinger] Result for ' + entry.mac + ' (' + entry.ip + '): ' +
-      result.received + '/' + result.sent + ' packets received -> ' + (result.online ? 'ONLINE' : 'OFFLINE')
+      result.received + '/' + result.sent + ' packets received -> ' +
+      (result.online ? 'ONLINE' : 'OFFLINE')
     );
     applyPingResult(entry, result);
   }
 
   _cycleRunning = false;
-  logger.debug('[Pinger] Ping cycle complete');
+  logger.info('[Pinger] Ping cycle complete');
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +169,8 @@ function setClients(entries) {
       last_ping_at:     dbPing.last_ping_at,
       last_ping_result: dbPing.last_ping_result,
     });
-    logger.debug('[Pinger] Restored persisted ping state for ' + entry.mac + ': ' + (online ? 'online' : 'offline') + ' (' + dbPing.last_ping_result + ')');
+    logger.debug('[Pinger] Restored persisted ping state for ' + entry.mac + ': ' +
+      (online ? 'online' : 'offline') + ' (' + dbPing.last_ping_result + ')');
   });
 }
 
@@ -194,14 +194,15 @@ function triggerCycle() {
  */
 async function pingClient(mac) {
   var entry = knownClients.find(function(e) { return e.mac === mac; });
-  if (!entry) throw new Error('MAC ' + mac + ' not in known client list');
+  if (!entry)    throw new Error('MAC ' + mac + ' not in known client list');
   if (!entry.ip) throw new Error('MAC ' + mac + ' has no IP, cannot ping');
 
   logger.info('[Pinger] Manual ping for ' + mac + ' (' + entry.ip + ')');
   var result = await pingOne(entry.ip);
   logger.debug(
     '[Pinger] Manual result for ' + mac + ': ' +
-    result.received + '/' + result.sent + ' -> ' + (result.online ? 'ONLINE' : 'OFFLINE')
+    result.received + '/' + result.sent + ' -> ' +
+    (result.online ? 'ONLINE' : 'OFFLINE')
   );
   return applyPingResult(entry, result);
 }
@@ -217,10 +218,9 @@ function isOnline(mac) {
 }
 
 function start(intervalMinutes, onStateChange) {
-  var mins       = intervalMinutes || 5;
-  _intervalMs    = mins * 60 * 1000;
+  var mins      = intervalMinutes || 5;
+  _intervalMs   = mins * 60 * 1000;
   _onStateChange = onStateChange || null;
-
   logger.info('[Pinger] Starting; will ping discovered clients every ' + mins + ' minute(s)');
 }
 
